@@ -691,7 +691,7 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 mutable struct Symmetry_Resolved_ED_Data
-    model::ShortRange_Real_Space_Second_Quantized_Model
+    second_quantized_model::ShortRange_Real_Space_Second_Quantized_Model
     n_filled::Int
     filling_fraction::Rational{Int}
     symmetry::Finite_Symmetry_Group
@@ -710,17 +710,17 @@ function ed_scan_at_irrep_matrix!(irrep_label, ed_data::Symmetry_Resolved_ED_Dat
     @assert irrep_idx !== nothing
 
     irrep = ed_data.irrep_list[irrep_idx]
-    statistics = ed_data.model.statistics
+    statistics = ed_data.second_quantized_model.statistics
     basis = build_symmetry_sector_basis(ed_data.orbit_catalog, irrep)
     ed_data.sector_dims[irrep_idx] = length(basis.representative_mask_list)
 
     # Use distributed construction when workers are available (HPC)
     if nprocs() > 1 && ed_data.sector_dims[irrep_idx] > 500
-        H = build_ed_Hamiltonian_symmetry_block_distributed(basis, ed_data.model.bilinear_terms,
-            ed_data.model.density_density_terms, statistics)
+        H = build_ed_Hamiltonian_symmetry_block_distributed(basis, ed_data.second_quantized_model.bilinear_terms,
+            ed_data.second_quantized_model.density_density_terms, statistics)
     else
-        H = build_ed_Hamiltonian_symmetry_block(basis, ed_data.model.bilinear_terms,
-            ed_data.model.density_density_terms, statistics)
+        H = build_ed_Hamiltonian_symmetry_block(basis, ed_data.second_quantized_model.bilinear_terms,
+            ed_data.second_quantized_model.density_density_terms, statistics)
     end
     vals, vecs = diagonalize_block_arpack(H; nev=nev)
     ed_data.ed_scan_res[irrep_idx] = (vals, vecs)
@@ -739,7 +739,7 @@ function ed_scan_at_irrep_matrixfree!(irrep_label, ed_data::Symmetry_Resolved_ED
     @assert irrep_idx !== nothing
 
     irrep = ed_data.irrep_list[irrep_idx]
-    statistics = ed_data.model.statistics
+    statistics = ed_data.second_quantized_model.statistics
     basis = build_symmetry_sector_basis(ed_data.orbit_catalog, irrep)
     sector_dim = length(basis.representative_mask_list)
     ed_data.sector_dims[irrep_idx] = sector_dim
@@ -751,8 +751,8 @@ function ed_scan_at_irrep_matrixfree!(irrep_label, ed_data::Symmetry_Resolved_ED
 
     print("\tMatrix-free mode @ irrep $(irrep.label) (dim=$sector_dim, threads=$(Threads.nthreads())) ... ")
 
-    bilinear = ed_data.model.bilinear_terms
-    density = ed_data.model.density_density_terms
+    bilinear = ed_data.second_quantized_model.bilinear_terms
+    density = ed_data.second_quantized_model.density_density_terms
 
     res = @timed begin
         # Build and populate CanonicalMap
@@ -1139,7 +1139,7 @@ function plot_spectrum(ed_data::Symmetry_Resolved_ED_Data; shift_to_zero::Bool=t
     end
     fig = Figure(size=(600, 400))
     ax = Axis(fig[1, 1]; xlabel="Irrep index", ylabel="E",
-        title="ED Spectrum — $(ed_data.model.lattice.sample_size), ν=$(ed_data.filling_fraction)",
+        title="ED Spectrum — $(ed_data.second_quantized_model.lattice.sample_size), ν=$(ed_data.filling_fraction)",
         xticks=0:2:(n_irrep-1), xminorticksvisible=true, yminorticksvisible=true)
     for k in 1:n_irrep, e in 1:nev
         val = spec[k, e]
