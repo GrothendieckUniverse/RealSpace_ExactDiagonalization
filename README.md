@@ -237,7 +237,7 @@ $$S^z_i = n_i - \tfrac12,\qquad S^+_i = b^\dagger_i,\qquad S^-_i = b_i$$
 
 $$\mathbf{S}_i\cdot\mathbf{S}_j = n_i n_j + \tfrac12(b^\dagger_i b_j + \mathrm{h.c.}) - \tfrac12 n_i - \tfrac12 n_j + \tfrac14$$
 
-At half-filling ($N_e=N/2$), constant contributions sum to $-JN/4$ and are absorbed by on-site density terms $(i,i,-J/2)$. Translation symmetry $\mathbb{Z}_N$ gives $N$ momentum sectors.
+At half-filling ($N_e=N/2$), constant contributions sum to $-JN/4$ and are absorbed by on-site density terms $(i,i,-J/2)$. Translation symmetry $\mathbb Z^N$ gives $N$ momentum sectors.
 
 ```bash
 julia --project=. examples/spin_heisenberg_chain.jl
@@ -263,7 +263,7 @@ $$H = -t\sum_{\langle i,j\rangle,\sigma} \big(c^\dagger_{i\sigma} c_{j\sigma} + 
 
 Spin degrees of freedom are handled by the **flattened-graph approach**: each spatial site $i$ generates two interleaved graph vertices — $i_\uparrow$ (vertex $2i-1$) and $i_\downarrow$ (vertex $2i$). This preserves correct fermionic anticommutation via the Jordan-Wigner string, with no modification to the `Symmetry_Operation` infrastructure.
 
-2×3 spatial unit cells → 12 graph vertices, $N_\uparrow=N_\downarrow=3$ ($N_e=6$), $t=1$, $U=8$. Translation group $\mathbb{Z}_2\times\mathbb{Z}_3$.
+2×3 spatial unit cells → 12 graph vertices, $N_\uparrow=N_\downarrow=3$ ($N_e=6$), $t=1$, $U=8$. Translation group $\mathbb Z^2\times\mathbb Z^3$.
 
 ```bash
 julia --project=. examples/fermion_hubbard_square.jl
@@ -284,9 +284,9 @@ Timing **one symmetry sector** per model and system size (after JIT warmup):
 
 | Model | System Sizes | Symmetry Group | Max Vertices |
 |-------|-------------|----------------|-------------|
-| Spin-½ Heisenberg chain | $N = 20, 22, 24, 26, 28$ | $\mathbb{Z}_N$ | 28 |
-| Bosonic Haldane FCI | $[2,3], [2,4], [2,5], [3,4], [2,7]$ | $\mathbb{Z}^{L_1}\!\times\!\mathbb{Z}^{L_2}$ | 28 |
-| Spinful Fermi-Hubbard | $[2,3], [2,4], [2,5], [3,4], [2,7]$ | $\mathbb{Z}^{L_1}\!\times\!\mathbb{Z}^{L_2}$ | 28 |
+| Spin-½ Heisenberg chain | $N = 20, 22, 24, 26, 28$ | $\mathbb Z^N$ | 28 |
+| Bosonic Haldane FCI | $[2,3], [2,4], [2,5], [3,4], [2,7]$ | $\mathbb{Z}^{L_1}\times\mathbb{Z}^{L_2}$ | 28 |
+| Spinful Fermi-Hubbard | $[2,3], [2,4], [2,5], [3,4], [2,7]$ | $\mathbb{Z}^{L_1}\times\mathbb{Z}^{L_2}$ | 28 |
 
 - $N=28$ Heisenberg: full Hilbert space $2^{28} = 2.68\times10^8$, reduced to $\sim\!9.6\times10^6$ per sector.
 - $[2,7]$ Hubbard: $\binom{28}{14} = 4.01\times10^7$, reduced to $\sim\!2.9\times10^6$ per sector.
@@ -294,27 +294,6 @@ Timing **one symmetry sector** per model and system size (after JIT warmup):
 Generated figures (in `benchmark/figures/`): system-size plots, log-log scaling plots, and a combined summary.
 
 ![Combined benchmark results](benchmark/figures/benchmark_combined.svg)
-
-### XDiag Comparison
-
-We benchmark against [XDiag](https://github.com/awietek/xdiag) on identical Haldane honeycomb hard-core boson systems, 3 momentum sectors averaged per size.
-
-```bash
-julia --project=. -p 8 benchmark/xdiag_compare.jl
-```
-
-| Lattice | Sites | $N_p$ | Full dim | Max sector dim | Matrix mode (s) | vs XDiag | Matrix-free (s) | vs XDiag |
-|---------|-------|-------|----------|----------------|-----------------|----------|-----------------|----------|
-| 2×3 | 12 | 3 | 220 | 38 | 0.001 | **253×** | 0.028 | 9× |
-| 2×4 | 16 | 4 | 1,820 | 240 | 0.060 | **18×** | 0.020 | **55×** |
-| 2×5 | 20 | 5 | 15,504 | 1,552 | 0.311 | **7.7×** | 0.858 | 2.8× |
-| 3×4 | 24 | 6 | 134,596 | 11,240 | 2.519 | **2.8×** | 26.906 | 0.27× |
-
-**Key findings:**
-- Matrix mode consistently outperforms XDiag by 2.8–253×.
-- Matrix-free mode beats XDiag up to [2,5] but falls behind at [3,4] (~11k dim) where KrylovKit needs ~150–200 matvecs vs one Arpack factorization.
-- All FCI ground-state energies agree to $10^{-6}$ precision.
-- The [4,4] system (10.5M Hilbert space) is beyond XDiag's single-node range; our matrix mode handles it in 162 s, matrix-free in 932 s.
 
 ---
 
