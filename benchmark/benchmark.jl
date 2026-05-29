@@ -92,8 +92,8 @@ function build_heisenberg_ed(N::Int)
     )
     n_site = lattice.n_site
     n_filled = N ÷ 2
-    symmetry = build_translation_group(lattice)
-    return build_ed_data(model; filling_fraction=n_filled // n_site, symmetry=symmetry)
+    symmetry_group = build_translation_group(lattice)
+    return build_ed_data(model; filling_fraction=n_filled // n_site, symmetry_group=symmetry_group)
 end
 
 "Build Haldane honeycomb FCI ED data"
@@ -133,8 +133,8 @@ function build_haldane_ed(sample_size::Vector{Int})
         Dict("t" => t, "t′" => t′, "t′′" => t′′, "ϕ" => ϕ), lattice, tb_model, Bosonic(), bilinear_terms, density_terms,
     )
     n_filled = prod(sample_size) ÷ 2
-    symmetry = build_translation_group(lattice)
-    return build_ed_data(model; filling_fraction=n_filled // lattice.n_site, symmetry=symmetry)
+    symmetry_group = build_translation_group(lattice)
+    return build_ed_data(model; filling_fraction=n_filled // lattice.n_site, symmetry_group=symmetry_group)
 end
 
 "Build spinful Fermi-Hubbard ED data on square lattice"
@@ -200,8 +200,8 @@ function build_hubbard_ed(sample_size::Vector{Int})
         end
         push!(ops, Symmetry_Operation((δx, δy), perm))
     end
-    symmetry = Finite_Symmetry_Group("translations", ops; identity_idx=1)
-    return build_ed_data(model; filling_fraction=n_filled // n_site, symmetry=symmetry)
+    symmetry_group = Finite_Symmetry_Group("translations", ops; identity_idx=1)
+    return build_ed_data(model; filling_fraction=n_filled // n_site, symmetry_group=symmetry_group)
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -279,7 +279,7 @@ function run_benchmarks()
                 "Heisenberg", "N=$N", ed.second_quantized_model.lattice.n_site, ed.n_filled,
                 binomial(ed.second_quantized_model.lattice.n_site, ed.n_filled),
                 length(ed.orbit_catalog.representative_mask_list),
-                length(ed.symmetry.operations), dim, string(mode), t_elapsed, e0,
+                length(ed.symmetry_group.operations), dim, string(mode), t_elapsed, e0,
             ))
             println("  N=$N  mode=$(rpad(mode,11))  dim=$dim  t=$(round(t_elapsed,digits=4))s")
         end
@@ -297,7 +297,7 @@ function run_benchmarks()
                 "Haldane_Boson", "$(ss[1])×$(ss[2])", ed.second_quantized_model.lattice.n_site, ed.n_filled,
                 binomial(ed.second_quantized_model.lattice.n_site, ed.n_filled),
                 length(ed.orbit_catalog.representative_mask_list),
-                length(ed.symmetry.operations), dim, string(mode), t_elapsed, e0,
+                length(ed.symmetry_group.operations), dim, string(mode), t_elapsed, e0,
             ))
             println("  $(ss[1])×$(ss[2])  mode=$(rpad(mode,11))  dim=$dim  t=$(round(t_elapsed,digits=4))s")
         end
@@ -315,7 +315,7 @@ function run_benchmarks()
                 "Hubbard_Fermion", "$(ss[1])×$(ss[2])", ed.second_quantized_model.lattice.n_site, ed.n_filled,
                 binomial(ed.second_quantized_model.lattice.n_site, ed.n_filled),
                 length(ed.orbit_catalog.representative_mask_list),
-                length(ed.symmetry.operations), dim, string(mode), t_elapsed, e0,
+                length(ed.symmetry_group.operations), dim, string(mode), t_elapsed, e0,
             ))
             println("  $(ss[1])×$(ss[2])  mode=$(rpad(mode,11))  dim=$dim  t=$(round(t_elapsed,digits=4))s")
         end
