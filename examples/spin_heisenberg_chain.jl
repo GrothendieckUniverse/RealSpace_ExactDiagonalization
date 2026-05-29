@@ -107,14 +107,14 @@ function test_Heisenberg_1D()
     # 3. Translation symmetry: Z_{N_site}
     # ═══════════════════════════════════════════════════════════════════════════
 
-    symmetry = build_translation_group(lattice)
-    @info "Translation group: |G| = $(length(symmetry.operations))"
+    symmetry_group = build_translation_group(lattice)
+    @info "Translation group: |G| = $(length(symmetry_group.operations))"
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 4. Build ED data and run symmetry-resolved scan
     # ═══════════════════════════════════════════════════════════════════════════
 
-    ed_data = build_ed_data(model; filling_fraction=N_E // n_site, symmetry=symmetry)
+    ed_data = build_ed_data(model; filling_fraction=N_E // n_site, symmetry_group=symmetry_group)
 
     println("\n" * "="^70)
     println("  Heisenberg Chain ED — N=$N_SITE, S^z=0 sector")

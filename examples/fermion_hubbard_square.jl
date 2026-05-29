@@ -144,10 +144,10 @@ function test_fermi_hubbard()
         end
         push!(ops, Symmetry_Operation((δx, δy), perm))
     end
-    symmetry = Finite_Symmetry_Group("translations", ops; identity_idx=1)
-    @info "Translation group: |G| = $(length(symmetry.operations))"
+    symmetry_group = Finite_Symmetry_Group("translations", ops; identity_idx=1)
+    @info "Translation group: |G| = $(length(symmetry_group.operations))"
 
-    ed_data = build_ed_data(model; filling_fraction=filling_frac, symmetry=symmetry)
+    ed_data = build_ed_data(model; filling_fraction=filling_frac, symmetry_group=symmetry_group)
 
     println("\n" * "="^70)
     println("  Fermi-Hubbard — square lattice $(SAMPLE_SIZE[1])×$(SAMPLE_SIZE[2])")

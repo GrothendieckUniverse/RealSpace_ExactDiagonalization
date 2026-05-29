@@ -126,8 +126,8 @@ function test_bose_hubbard()
     # 4. Translation symmetry and ED
     # ═══════════════════════════════════════════════════════════════════════════
 
-    symmetry = build_translation_group(lattice)
-    ed_data = build_ed_data(model; filling_fraction=filling_frac, symmetry=symmetry)
+    symmetry_group = build_translation_group(lattice)
+    ed_data = build_ed_data(model; filling_fraction=filling_frac, symmetry_group=symmetry_group)
 
     println("\n" * "="^70)
     println("  Bosonic FCI — Haldane honeycomb $(SAMPLE_SIZE[1])×$(SAMPLE_SIZE[2])")
