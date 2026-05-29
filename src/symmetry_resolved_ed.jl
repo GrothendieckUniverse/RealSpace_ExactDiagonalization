@@ -49,10 +49,15 @@ using .BitWise_Operations: Mask, COMPLEX_ONE, bitmask_of_site,
 # ═══════════════════════════════════════════════════════════════════════════
 
 """
-    Symmetry_Operation{Group_Label}
+Struct `Symmetry_Operation{Group_Label}` for One Single Group Action on the Occupation Basis
+---
+following (for both boson and fermions) `U_g |n₁,…,n_N⟩ = (∏_{i∈occ} η_g(i)) * sgn_g(occ) * |n_{π(1)},…,n_{π(N)}⟩`
 
-One group element g ∈ G acting on the Fock basis:
-    U_g |n₁,…,n_N⟩ = (∏_{i∈occ} η_g(i)) × sgn_g(occ) × |n_{π(1)},…,n_{π(N)}⟩
+In the second quantized form of the occupation basis, it acts as `U_g b_i^† U_g^{-1} = η_g(i) b_{perm[i]}^†`,
+- Fields:
+    - `label::Group_Label`: the generic `Group_Label`-typed label of the group element, depending on the symmetry transformation we are considering
+    - `perm::Vector{Int}`: the permutation of the whole vertices, which is a vector of length `N` with each element being an integer from `1` to `N`
+    - `perm_phases::Vector{ComplexF64}`: the associated phase factor for each vertex, which is a vector of length `N` with each element being a complex number. This is used to capture the nontrivial U(1) phase factor in the symmetry action
 """
 struct Symmetry_Operation{Group_Label}
     label::Group_Label
@@ -62,7 +67,7 @@ end
 
 function Symmetry_Operation(label::Group_Label, perm::Vector{Int}; perm_phases=nothing) where {Group_Label}
     n_site = length(perm)
-    phases = perm_phases === nothing ? fill(1.0 + 0.0im, n_site) : ComplexF64.(perm_phases)
+    phases = perm_phases === nothing ? fill(COMPLEX_ONE, n_site) : ComplexF64.(perm_phases)
     @assert length(phases) == n_site
     return Symmetry_Operation{Group_Label}(label, perm, phases)
 end
@@ -71,18 +76,25 @@ end
 # 2. Finite Symmetry Group
 # ═══════════════════════════════════════════════════════════════════════════
 
+abstract type Abstract_Symmetry_Group end
 """
-    Finite_Symmetry_Group
-
-Explicit list of all group elements.
+Struct `Finite_Symmetry_Group`
+---
+as a collection of `Symmetry_Operation`s together with some metadata.
+- Fields:
+    - `name::String`: group name
+    - `n_site::Int`: number of vertices in the graph
+    - `operations::Vector{<:Symmetry_Operation}`: vector of symmetry operations, each of which is a group element acting on the occupation basis
+    - `identity_idx::Int`: index of the identity operation in the `operations` vector
 """
-struct Finite_Symmetry_Group
+struct Finite_Symmetry_Group <: Abstract_Symmetry_Group
     name::String
     n_site::Int
-    operations::Vector{Symmetry_Operation}
+    operations::Vector{<:Symmetry_Operation}
     identity_idx::Int
 end
 
+"constructor for `Finite_Symmetry_Group` with optional `identity_idx` argument indicating the linear-index of the identity group operation"
 function Finite_Symmetry_Group(name::String, ops::Vector{<:Symmetry_Operation}; identity_idx::Int=1)
     @assert !isempty(ops)
     n_site = length(ops[1].perm)
@@ -186,7 +198,7 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 struct Symmetry_Orbit_Catalog
-    symmetry::Finite_Symmetry_Group
+    symmetry_group::Finite_Symmetry_Group
     representative_mask_list::Vector{Mask}
     stabilizer_order_list::Vector{Int}
     stabilizer_g_indices_list::Vector{Vector{Int}}
@@ -196,14 +208,14 @@ end
 function build_symmetry_orbit_catalog(;
     model::Second_Quantized_Model,
     n_filled::Int,
-    symmetry::Finite_Symmetry_Group,
+    symmetry_group::Finite_Symmetry_Group,
     statistics::Statistics,
 )::Symmetry_Orbit_Catalog
-    n_site = symmetry.n_site
+    n_site = symmetry_group.n_site
     @assert n_site == model.lattice.n_site
 
     n_total = binomial(n_site, n_filled)
-    n_orbits_est = cld(n_total, group_order(symmetry))
+    n_orbits_est = cld(n_total, group_order(symmetry_group))
 
     repr_list = Mask[]
     stab_order_list = Int[]
@@ -217,7 +229,7 @@ function build_symmetry_orbit_catalog(;
     seen = Set{Mask}()
     sizehint!(seen, n_total)
 
-    nG = group_order(symmetry)
+    nG = group_order(symmetry_group)
     orbit_masks = Vector{Mask}(undef, nG)
     orbit_amps = Vector{ComplexF64}(undef, nG)
 
@@ -231,7 +243,7 @@ function build_symmetry_orbit_catalog(;
             gidx_stab = Int[]
             phase_stab = ComplexF64[]
             @inbounds for gidx in 1:nG
-                shifted, α = apply_operation_to_mask(m, symmetry.operations[gidx], statistics)
+                shifted, α = apply_operation_to_mask(m, symmetry_group.operations[gidx], statistics)
                 shifted == m || continue
                 push!(gidx_stab, gidx)
                 push!(phase_stab, α)
@@ -252,7 +264,7 @@ function build_symmetry_orbit_catalog(;
 
                 min_mask = typemax(Mask)
                 @inbounds for gidx in 1:nG
-                    shifted, α = apply_operation_to_mask(m, symmetry.operations[gidx], statistics)
+                    shifted, α = apply_operation_to_mask(m, symmetry_group.operations[gidx], statistics)
                     orbit_masks[gidx] = shifted
                     orbit_amps[gidx] = α
                     shifted < min_mask && (min_mask = shifted)
@@ -284,35 +296,52 @@ function build_symmetry_orbit_catalog(;
 
     n_orbits = length(repr_list)
     printstyled("Done. $(n_orbits) orbits (reduction $(round(n_orbits/n_total*100, digits=1))%).  t=$(round(res.time, digits=3))s\n", bold=true)
-    return Symmetry_Orbit_Catalog(symmetry, repr_list, stab_order_list, stab_gidx_list, stab_phase_list)
+    return Symmetry_Orbit_Catalog(symmetry_group, repr_list, stab_order_list, stab_gidx_list, stab_phase_list)
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 7. 1D Irreps
 # ═══════════════════════════════════════════════════════════════════════════
 
+"""
+Struct `OneDim_Irrep{Irrep_Label}` for _One Single_ One-dimensional Irreducible Representation (Irrep)
+---
+labeled by a generic typed `label::Irrep_Label`.
+- Fields:
+    - `label::Irrep_Label`: the `Irrep_Label`-typed label of the irrep, can be integer, tuples etc., depending on the symmetry transformation we are considering
+    - `values::Vector{ComplexF64}`: the irrep values for each group element, which is a vector of length equal to the order of the group, with each element being a complex number representing the irrep value χ(g) for the g-th group operation
+"""
 struct OneDim_Irrep{Irrep_Label}
     label::Irrep_Label
     values::Vector{ComplexF64}   # χ(g) for each g ∈ G
 end
-
-OneDim_Irrep(label::Irrep_Label, values::Vector{T}) where {Irrep_Label,T<:Number} =
-    OneDim_Irrep{Irrep_Label}(label, ComplexF64.(collect(values)))
+"constructor for `OneDim_Irrep`"
+OneDim_Irrep(label::Irrep_Label, values::Vector{T}) where {Irrep_Label,T<:Number} = OneDim_Irrep{Irrep_Label}(label, ComplexF64.(collect(values)))
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 8. Symmetry Sector Basis
 # ═══════════════════════════════════════════════════════════════════════════
 
+"""
+Struct `Symmetry_Sector_Basis` to Store the Symmetry Sector Basis for a Given 1D Irrep
+---
+- Fields:
+    - `irrep::OneDim_Irrep`: the 1D irrep for which this symmetry sector basis is constructed
+    - `symmetry_group::Finite_Symmetry_Group`: the symmetry group under consideration
+    - `representative_mask_list::Vector{Mask}`: the list of representative masks for each orbit that belongs to this irrep/sector, inherited from the `Symmetry_Orbit_Catalog`
+    - `stabilizer_group_order_list::Vector{Int}`: the list of stabilizer group orders for each representative mask in this sector, inherited from the `Symmetry_Orbit_Catalog`
+    - `representative_mask_to_mask_idx_map::Dict{Mask,Int}`: `Hashmap<representative_mask, idx in representative_mask_list>`
+"""
 struct Symmetry_Sector_Basis
     irrep::OneDim_Irrep
-    symmetry::Finite_Symmetry_Group
+    symmetry_group::Finite_Symmetry_Group
     representative_mask_list::Vector{Mask}
     stabilizer_order_list::Vector{Int}
-    repr_to_idx::Dict{Mask,Int}
+    representative_mask_to_mask_idx_map::Dict{Mask,Int}
 end
 
 @inline function _basis_index(basis::Symmetry_Sector_Basis, repr::Mask)::Int
-    return get(basis.repr_to_idx, repr, 0)
+    return get(basis.representative_mask_to_mask_idx_map, repr, 0)
 end
 
 @inline function _is_orbit_compatible(catalog::Symmetry_Orbit_Catalog, orbit_idx::Int,
@@ -335,8 +364,8 @@ function build_symmetry_sector_basis(catalog::Symmetry_Orbit_Catalog, irrep::One
             push!(stab_order_list, catalog.stabilizer_order_list[i])
         end
     end
-    repr_to_idx = Dict{Mask,Int}(m => idx for (idx, m) in enumerate(repr_list))
-    return Symmetry_Sector_Basis(irrep, catalog.symmetry, repr_list, stab_order_list, repr_to_idx)
+    representative_mask_to_mask_idx_map = Dict{Mask,Int}(m => idx for (idx, m) in enumerate(repr_list))
+    return Symmetry_Sector_Basis(irrep, catalog.symmetry_group, repr_list, stab_order_list, representative_mask_to_mask_idx_map)
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -353,7 +382,7 @@ This is the key optimization that makes the matrix-free mode only ~1.5× slower
 than the explicit sparse-matrix mode (following XDiag's design).
 """
 struct CanonicalMap
-    symmetry::Finite_Symmetry_Group
+    symmetry_group::Finite_Symmetry_Group
     statistics::Statistics
     cache::Dict{Mask,Tuple{Mask,Int,ComplexF64}}   # scattered mask → canonical data
 end
@@ -361,7 +390,7 @@ end
 "O(1) canonical-representative lookup (falls back to O(|G|) on cache miss)"
 @inline function get_canonical(cmap::CanonicalMap, m::Mask)::Tuple{Mask,Int,ComplexF64}
     return get!(cmap.cache, m) do
-        get_canonical_representative(m, cmap.symmetry, cmap.statistics)
+        get_canonical_representative(m, cmap.symmetry_group, cmap.statistics)
     end
 end
 
@@ -392,7 +421,7 @@ end
 
 "Slow path: O(|G|) canonicalization (used during matrix construction or when no CanonicalMap)"
 @inline function _project_slow(m::Mask, basis::Symmetry_Sector_Basis, stats::Statistics)
-    repr, g_idx, α = get_canonical_representative(m, basis.symmetry, stats)
+    repr, g_idx, α = get_canonical_representative(m, basis.symmetry_group, stats)
     idx = _basis_index(basis, repr)
     idx == 0 && return nothing
     return (idx, α * conj(basis.irrep.values[g_idx]))
@@ -573,7 +602,7 @@ function build_ed_Hamiltonian_symmetry_block(
     Is = Int[]
     Js = Int[]
     Vs = ComplexF64[]
-    est_nnz = 1 + 4 * basis.symmetry.n_site
+    est_nnz = 1 + 4 * basis.symmetry_group.n_site
     sizehint!(Is, sector_dim * est_nnz)
     sizehint!(Js, sector_dim * est_nnz)
     sizehint!(Vs, sector_dim * est_nnz)
@@ -689,12 +718,27 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 # 14. High-level ED data structure
 # ═══════════════════════════════════════════════════════════════════════════
+abstract type ED_Data end 
 
-mutable struct Symmetry_Resolved_ED_Data
+
+"""
+Struct `Symmetry_Resolved_ED_Data` to Store All Data for Symmetry-resolved ED
+---
+- Fields:
+    - `second_quantized_model::Real_Space_Second_Quantized_Model`: the second quantized model containing the lattice and the Hamiltonian parameters
+    - `n_filled::Int`: the number of filled particles (set bits in the occupation basis)
+    - `filling_fraction::Rational{Int}`: the filling fraction, defined as `n_filled / n_site`
+    - `symmetry_group::Finite_Symmetry_Group`: the symmetry group used for symmetry resolution
+    - `irrep_list::Vector{<:OneDim_Irrep}`: the list of 1D irreps for which we want to resolve the ED
+    - `orbit_catalog::Symmetry_Orbit_Catalog`: the catalog of symmetry orbits for the given model and symmetry
+    - `sector_dims::Vector{Int}`: the dimensions of each symmetry sector corresponding to each irrep, which is equal to the number of representative masks in the sector basis for that irrep
+    - `ed_scan_res::Dict{Int, Tuple{Vector{Float64},Matrix{ComplexF64}}}`: a hashmap `Dict<irrep_idx, (eigvals, eigvecs)>` to store the ED results for each symmetry sector, where `irrep_idx` is the index of the irrep in `irrep_list`, and `(eigvals, eigvecs)` is the tuple of eigenvalues and eigenvectors obtained from the ED scan for that sector
+"""
+mutable struct Symmetry_Resolved_ED_Data <: ED_Data
     second_quantized_model::ShortRange_Real_Space_Second_Quantized_Model
     n_filled::Int
     filling_fraction::Rational{Int}
-    symmetry::Finite_Symmetry_Group
+    symmetry_group::Finite_Symmetry_Group
     irrep_list::Vector{OneDim_Irrep}
     orbit_catalog::Symmetry_Orbit_Catalog
     sector_dims::Vector{Int}
@@ -756,7 +800,7 @@ function ed_scan_at_irrep_matrixfree!(irrep_label, ed_data::Symmetry_Resolved_ED
 
     res = @timed begin
         # Build and populate CanonicalMap
-        cmap = CanonicalMap(ed_data.symmetry, statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
+        cmap = CanonicalMap(ed_data.symmetry_group, statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
         populate_canonical_map!(cmap, basis, bilinear)
 
         # Create the linear operator. The distributed variant avoids @everywhere;
@@ -815,7 +859,7 @@ function build_ed_Hamiltonian_symmetry_block_distributed(
             Is = Int[]
             Js = Int[]
             Vs = ComplexF64[]
-            est_nnz = 1 + 4 * basis.symmetry.n_site
+            est_nnz = 1 + 4 * basis.symmetry_group.n_site
             sizehint!(Is, length(rng) * est_nnz)
             sizehint!(Js, length(rng) * est_nnz)
             sizehint!(Vs, length(rng) * est_nnz)
@@ -1069,27 +1113,28 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 # 20. Convenience constructors
 # ═══════════════════════════════════════════════════════════════════════════
-
+"constructor for `Symmetry_Resolved_ED_Data`"
 function build_ed_data(model::ShortRange_Real_Space_Second_Quantized_Model;
     filling_fraction::Rational{Int}=1 // 2,
-    symmetry::Finite_Symmetry_Group)::Symmetry_Resolved_ED_Data
+    symmetry_group::Finite_Symmetry_Group
+)::Symmetry_Resolved_ED_Data
     n_site = model.lattice.n_site
     n_filled = Int(filling_fraction * n_site)
     @assert denominator(filling_fraction) * n_filled == numerator(filling_fraction) * n_site
 
-    irrep_list = build_irrep_list(symmetry, model.lattice)
+    irrep_list = build_irrep_list(symmetry_group, model.lattice)
     catalog = build_symmetry_orbit_catalog(; model=model, n_filled=n_filled,
-        symmetry=symmetry, statistics=model.statistics)
+        symmetry_group=symmetry_group, statistics=model.statistics)
     sector_dims = zeros(Int, length(irrep_list))
     ed_scan_res = Dict{Int,Tuple{Vector{Float64},Matrix{ComplexF64}}}()
 
-    return Symmetry_Resolved_ED_Data(model, n_filled, filling_fraction, symmetry,
+    return Symmetry_Resolved_ED_Data(model, n_filled, filling_fraction, symmetry_group,
         irrep_list, catalog, sector_dims, ed_scan_res)
 end
 
 function full_ed(model::ShortRange_Real_Space_Second_Quantized_Model, n_filled::Int; nev::Int=5)
     symmetry = build_identity_group(model.lattice.n_site)
-    ed_data = build_ed_data(model; filling_fraction=n_filled // model.lattice.n_site, symmetry=symmetry)
+    ed_data = build_ed_data(model; filling_fraction=n_filled // model.lattice.n_site, symmetry_group=symmetry)
     ed_scan!(ed_data; nev=nev)
     return ed_data.ed_scan_res[1]
 end

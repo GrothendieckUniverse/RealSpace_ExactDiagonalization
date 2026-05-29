@@ -3,7 +3,7 @@ module BitWise_Operations
 using MLStyle
 
 const Mask = UInt # bit representation of the state in integer for state indexing
-const COMPLEX_ONE = ComplexF64(1)
+const COMPLEX_ONE = ComplexF64(1.0)
 
 "bit representation for the occupied/empty two-state vertex. Here `i` is the _1-based_ linear index of the vertex in the graph"
 @inline bitmask_of_site(i::Int)::Mask = @fastmath Mask(1) << (i - 1)
