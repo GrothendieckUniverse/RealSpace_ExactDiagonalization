@@ -1,6 +1,4 @@
 # RealSpace_ExactDiagonalization
-<<<<<<< HEAD
-
 **Symmetry-resolved exact diagonalization for hard-core bosons and fermions on arbitrary real-space graphs.**
 
 A high-performance, statistics-agnostic Julia implementation following the design philosophy of [XDiag](https://github.com/awietek/xdiag). The package block-diagonalizes interacting quantum lattice Hamiltonians via bitmask encoding, orbit-stabilizer decomposition, and irrep-induced projection — without ever forming the full many-body matrix.
@@ -386,6 +384,3 @@ RealSpace_ExactDiagonalization/
 - D.N. Sheng, Z.-C. Gu, K. Sun, L. Sheng, *Fractional Chern Insulator in a Bosonic Model with Flat Bands*, Phys. Rev. Lett. **107**, 146803 (2011)
 - R. Gosper, *HAKMEM* Item 175 (Gosper's hack)
 - Full design documentation: `doc/design.ipynb`
-=======
-Symmetry-resolved Exact Diagonalization in Real Space
->>>>>>> 8a5ebf08f1372b6bc2fd076ab0bcb44284783609
