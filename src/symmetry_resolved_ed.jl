@@ -1,0 +1,1150 @@
+# ============================================================================
+# Symmetry-Resolved Exact Diagonalization — XDiag-inspired High-Performance Engine
+#
+# Supports hard-core bosons and fermions on arbitrary real-space lattices.
+#
+# Two modes (following XDiag):
+#   • "matrix" mode  — precompute sparse H, then diagonalize (fast, memory-heavy)
+#   • "matrixfree" mode — on-the-fly H|ψ⟩ via multithreaded Lanczos (~1.5× slower,
+#                          near-zero memory overhead beyond basis vectors)
+#
+# Architecture:
+#   1. Symmetry group G → Symmetry_Operation (perm + U(1) phases)
+#   2. Gosper's hack → enumerate all bitmasks at fixed particle number
+#   3. Orbit-stabilizer decomposition → Symmetry_Orbit_Catalog
+#   4. 1D irreps → filter orbits → Symmetry_Sector_Basis
+#   5a. [matrix]  build sparse CSC block → Arpack
+#   5b. [matrixfree] CanonicalMap for O(1) lookup + Threads.@threads apply_H! → KrylovKit
+#
+# Key references:
+#   - XDiag: https://github.com/awietek/xdiag  /  arXiv:2505.02901
+#   - D.N. Sheng et al., Phys. Rev. Lett. 107, 146803 (2011)
+# ============================================================================
+
+using Base.Threads
+using Distributed
+using LinearAlgebra, SparseArrays, Arpack, KrylovKit
+using Printf, JLD2
+using MLStyle
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Parallelism strategy (HPC-first):
+#   - Launch: julia -p N  (distributed workers)
+#   - Default: BLAS threads = 1 (don't compete with distributed workers)
+#   - Hamiltonian construction: Distributed.pmap across workers
+#   - Diagonalization: temporarily BLAS.set_num_threads(nprocs()), restore to 1
+#   - Matrix-free H|ψ⟩: Threads.@threads (shared-memory) + optional pmap columns
+# ═══════════════════════════════════════════════════════════════════════════
+
+BLAS.set_num_threads(1)  # HPC default: one BLAS thread per process
+
+# Import bitwise operations from the submodule
+using .BitWise_Operations: Mask, COMPLEX_ONE, bitmask_of_site,
+    occupy_site_for_mask, empty_site_for_mask,
+    is_site_occupied, is_site_empty, n_occupied_for_mask,
+    filled_site_iter_for_mask, empty_site_iter_for_mask
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 1. Symmetry Operation — a single group element
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    Symmetry_Operation{Group_Label}
+
+One group element g ∈ G acting on the Fock basis:
+    U_g |n₁,…,n_N⟩ = (∏_{i∈occ} η_g(i)) × sgn_g(occ) × |n_{π(1)},…,n_{π(N)}⟩
+"""
+struct Symmetry_Operation{Group_Label}
+    label::Group_Label
+    perm::Vector{Int}               # site permutation (1-based)
+    perm_phases::Vector{ComplexF64} # U(1) phase η_g(i) per site
+end
+
+function Symmetry_Operation(label::Group_Label, perm::Vector{Int}; perm_phases=nothing) where {Group_Label}
+    n_site = length(perm)
+    phases = perm_phases === nothing ? fill(1.0 + 0.0im, n_site) : ComplexF64.(perm_phases)
+    @assert length(phases) == n_site
+    return Symmetry_Operation{Group_Label}(label, perm, phases)
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 2. Finite Symmetry Group
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    Finite_Symmetry_Group
+
+Explicit list of all group elements.
+"""
+struct Finite_Symmetry_Group
+    name::String
+    n_site::Int
+    operations::Vector{Symmetry_Operation}
+    identity_idx::Int
+end
+
+function Finite_Symmetry_Group(name::String, ops::Vector{<:Symmetry_Operation}; identity_idx::Int=1)
+    @assert !isempty(ops)
+    n_site = length(ops[1].perm)
+    @assert all(length(op.perm) == n_site && length(op.perm_phases) == n_site for op in ops)
+    @assert ops[identity_idx].perm == collect(1:n_site) "Identity must have trivial permutation"
+    return Finite_Symmetry_Group(name, n_site, ops, identity_idx)
+end
+
+@inline group_order(G::Finite_Symmetry_Group)::Int = length(G.operations)
+
+function ensure_distributed_workers_loaded!()
+    nprocs() == 1 && return nothing
+    for w in workers()
+        remotecall_fetch(Core.eval, w, Main, :(using RealSpace_ExactDiagonalization))
+        remotecall_fetch(Core.eval, w, Main, :(using LinearAlgebra; LinearAlgebra.BLAS.set_num_threads(1)))
+    end
+    return nothing
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 3. Group action on a bitmask — O(k) with bit tricks
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    apply_operation_to_mask(m, op, statistics) -> (new_mask, phase)
+
+Apply g ∈ G to a Fock state.
+
+Bosons:  α = ∏ η_g(i)
+Fermions: α = ∏ η_g(i) × (-1)^{#inversions}, tracked via count_ones(new_mask >> π(i))
+"""
+@inline function apply_operation_to_mask(m::Mask, op::Symmetry_Operation, ::Bosonic)::Tuple{Mask,ComplexF64}
+    tmp = m
+    new_mask = zero(Mask)
+    phase = COMPLEX_ONE
+    @inbounds @fastmath while tmp != 0
+        lsb = tmp & -tmp
+        idx = trailing_zeros(lsb) + 1
+        new_mask |= Mask(1) << (op.perm[idx] - 1)
+        phase *= op.perm_phases[idx]
+        tmp ⊻= lsb
+    end
+    return new_mask, phase
+end
+
+@inline function apply_operation_to_mask(m::Mask, op::Symmetry_Operation, ::Fermionic)::Tuple{Mask,ComplexF64}
+    tmp = m
+    new_mask = zero(Mask)
+    phase = COMPLEX_ONE
+    parity = Int8(1)
+    @inbounds @fastmath while tmp != 0
+        lsb = tmp & -tmp
+        idx = trailing_zeros(lsb) + 1
+        p = op.perm[idx]
+        if isodd(count_ones(new_mask >> p))
+            parity = -parity
+        end
+        new_mask |= Mask(1) << (p - 1)
+        phase *= op.perm_phases[idx]
+        tmp ⊻= lsb
+    end
+    return new_mask, phase * parity
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 4. Canonical representative (O(|G|) — used only during precomputation)
+# ═══════════════════════════════════════════════════════════════════════════
+
+function get_canonical_representative(m::Mask, G::Finite_Symmetry_Group, stats::Statistics)::Tuple{Mask,Int,ComplexF64}
+    repr = m
+    best_g = G.identity_idx
+    best_amp = COMPLEX_ONE
+    @inbounds for (g_idx, g) in enumerate(G.operations)
+        shifted, α = apply_operation_to_mask(m, g, stats)
+        if shifted < repr
+            repr = shifted
+            best_g = g_idx
+            best_amp = α
+        end
+    end
+    return repr, best_g, best_amp
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 5. Gosper's hack
+# ═══════════════════════════════════════════════════════════════════════════
+
+@inline function _gosper_next(x::Mask)::Mask
+    c = x & -x
+    r = x + c
+    return (((r ⊻ x) >> 2) ÷ c) | r
+end
+
+@inline function _first_combination_mask(n_filled::Int)::Mask
+    n_filled == 0 && return zero(Mask)
+    return (one(Mask) << n_filled) - one(Mask)
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 6. Symmetry Orbit Catalog
+# ═══════════════════════════════════════════════════════════════════════════
+
+struct Symmetry_Orbit_Catalog
+    symmetry::Finite_Symmetry_Group
+    representative_mask_list::Vector{Mask}
+    stabilizer_order_list::Vector{Int}
+    stabilizer_g_indices_list::Vector{Vector{Int}}
+    stabilizer_phases_list::Vector{Vector{ComplexF64}}
+end
+
+function build_symmetry_orbit_catalog(;
+    model::Second_Quantized_Model,
+    n_filled::Int,
+    symmetry::Finite_Symmetry_Group,
+    statistics::Statistics,
+)::Symmetry_Orbit_Catalog
+    n_site = symmetry.n_site
+    @assert n_site == model.lattice.n_site
+
+    n_total = binomial(n_site, n_filled)
+    n_orbits_est = cld(n_total, group_order(symmetry))
+
+    repr_list = Mask[]
+    stab_order_list = Int[]
+    stab_gidx_list = Vector{Int}[]
+    stab_phase_list = Vector{ComplexF64}[]
+    sizehint!(repr_list, n_orbits_est)
+    sizehint!(stab_order_list, n_orbits_est)
+    sizehint!(stab_gidx_list, n_orbits_est)
+    sizehint!(stab_phase_list, n_orbits_est)
+
+    seen = Set{Mask}()
+    sizehint!(seen, n_total)
+
+    nG = group_order(symmetry)
+    orbit_masks = Vector{Mask}(undef, nG)
+    orbit_amps = Vector{ComplexF64}(undef, nG)
+
+    print("\tBuilding symmetry-orbit catalog (n_filled=$n_filled, |G|=$nG) ... ")
+
+    @assert 0 <= n_filled <= n_site
+
+    res = @timed begin
+        if n_filled == 0 || n_filled == n_site
+            m = _first_combination_mask(n_filled)
+            gidx_stab = Int[]
+            phase_stab = ComplexF64[]
+            @inbounds for gidx in 1:nG
+                shifted, α = apply_operation_to_mask(m, symmetry.operations[gidx], statistics)
+                shifted == m || continue
+                push!(gidx_stab, gidx)
+                push!(phase_stab, α)
+            end
+            push!(repr_list, m)
+            push!(stab_order_list, length(gidx_stab))
+            push!(stab_gidx_list, gidx_stab)
+            push!(stab_phase_list, phase_stab)
+        else
+            x = _first_combination_mask(n_filled)
+            upper = one(Mask) << n_site
+            while x < upper
+                m = x
+                if m in seen
+                    x = _gosper_next(x)
+                    continue
+                end
+
+                min_mask = typemax(Mask)
+                @inbounds for gidx in 1:nG
+                    shifted, α = apply_operation_to_mask(m, symmetry.operations[gidx], statistics)
+                    orbit_masks[gidx] = shifted
+                    orbit_amps[gidx] = α
+                    shifted < min_mask && (min_mask = shifted)
+                end
+                @assert min_mask == m "Gosper ordering violation"
+
+                @inbounds for shifted in orbit_masks
+                    push!(seen, shifted)
+                end
+
+                gidx_stab = Int[]
+                phase_stab = ComplexF64[]
+                @inbounds for gidx in 1:nG
+                    if orbit_masks[gidx] == m
+                        push!(gidx_stab, gidx)
+                        push!(phase_stab, orbit_amps[gidx])
+                    end
+                end
+
+                push!(repr_list, m)
+                push!(stab_order_list, length(gidx_stab))
+                push!(stab_gidx_list, gidx_stab)
+                push!(stab_phase_list, phase_stab)
+
+                x = _gosper_next(x)
+            end
+        end
+    end
+
+    n_orbits = length(repr_list)
+    printstyled("Done. $(n_orbits) orbits (reduction $(round(n_orbits/n_total*100, digits=1))%).  t=$(round(res.time, digits=3))s\n", bold=true)
+    return Symmetry_Orbit_Catalog(symmetry, repr_list, stab_order_list, stab_gidx_list, stab_phase_list)
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7. 1D Irreps
+# ═══════════════════════════════════════════════════════════════════════════
+
+struct OneDim_Irrep{Irrep_Label}
+    label::Irrep_Label
+    values::Vector{ComplexF64}   # χ(g) for each g ∈ G
+end
+
+OneDim_Irrep(label::Irrep_Label, values::Vector{T}) where {Irrep_Label,T<:Number} =
+    OneDim_Irrep{Irrep_Label}(label, ComplexF64.(collect(values)))
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 8. Symmetry Sector Basis
+# ═══════════════════════════════════════════════════════════════════════════
+
+struct Symmetry_Sector_Basis
+    irrep::OneDim_Irrep
+    symmetry::Finite_Symmetry_Group
+    representative_mask_list::Vector{Mask}
+    stabilizer_order_list::Vector{Int}
+    repr_to_idx::Dict{Mask,Int}
+end
+
+@inline function _basis_index(basis::Symmetry_Sector_Basis, repr::Mask)::Int
+    return get(basis.repr_to_idx, repr, 0)
+end
+
+@inline function _is_orbit_compatible(catalog::Symmetry_Orbit_Catalog, orbit_idx::Int,
+    irrep::OneDim_Irrep; atol::Float64=1e-12)::Bool
+    gidxs = catalog.stabilizer_g_indices_list[orbit_idx]
+    phases = catalog.stabilizer_phases_list[orbit_idx]
+    @inbounds for j in eachindex(gidxs)
+        !isapprox(irrep.values[gidxs[j]], phases[j]; atol=atol) && return false
+    end
+    return true
+end
+
+function build_symmetry_sector_basis(catalog::Symmetry_Orbit_Catalog, irrep::OneDim_Irrep;
+    atol::Float64=1e-12)::Symmetry_Sector_Basis
+    repr_list = Mask[]
+    stab_order_list = Int[]
+    for i in eachindex(catalog.representative_mask_list)
+        if _is_orbit_compatible(catalog, i, irrep; atol=atol)
+            push!(repr_list, catalog.representative_mask_list[i])
+            push!(stab_order_list, catalog.stabilizer_order_list[i])
+        end
+    end
+    repr_to_idx = Dict{Mask,Int}(m => idx for (idx, m) in enumerate(repr_list))
+    return Symmetry_Sector_Basis(irrep, catalog.symmetry, repr_list, stab_order_list, repr_to_idx)
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 9. CanonicalMap — O(1) canonical-representative lookup for matrix-free mode
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    CanonicalMap
+
+Precomputed lookup: scattered_mask → (repr_mask, g_idx, α_g).
+
+Populated once before Lanczos iterations, then shared read-only across threads.
+This is the key optimization that makes the matrix-free mode only ~1.5× slower
+than the explicit sparse-matrix mode (following XDiag's design).
+"""
+struct CanonicalMap
+    symmetry::Finite_Symmetry_Group
+    statistics::Statistics
+    cache::Dict{Mask,Tuple{Mask,Int,ComplexF64}}   # scattered mask → canonical data
+end
+
+"O(1) canonical-representative lookup (falls back to O(|G|) on cache miss)"
+@inline function get_canonical(cmap::CanonicalMap, m::Mask)::Tuple{Mask,Int,ComplexF64}
+    return get!(cmap.cache, m) do
+        get_canonical_representative(m, cmap.symmetry, cmap.statistics)
+    end
+end
+
+"""
+    populate_canonical_map!(cmap, basis, bilinear_terms)
+
+Pre-scan all representative masks and all valid hopping moves, caching the
+canonical representative of every reachable scattered mask.  After this call,
+all `get_canonical` lookups during Lanczos iterations are O(1) hash hits.
+"""
+function populate_canonical_map!(cmap::CanonicalMap, basis::Symmetry_Sector_Basis,
+    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}})
+    @inbounds for repr_mask in basis.representative_mask_list
+        for (i_from, i_to, _) in bilinear_terms
+            if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
+                new_mask = empty_site_for_mask(repr_mask, i_from)
+                new_mask = occupy_site_for_mask(new_mask, i_to)
+                get_canonical(cmap, new_mask)  # populates cache if not present
+            end
+        end
+    end
+    return cmap
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 10. project_to_sector — irrep projection (uses CanonicalMap if provided)
+# ═══════════════════════════════════════════════════════════════════════════
+
+"Slow path: O(|G|) canonicalization (used during matrix construction or when no CanonicalMap)"
+@inline function _project_slow(m::Mask, basis::Symmetry_Sector_Basis, stats::Statistics)
+    repr, g_idx, α = get_canonical_representative(m, basis.symmetry, stats)
+    idx = _basis_index(basis, repr)
+    idx == 0 && return nothing
+    return (idx, α * conj(basis.irrep.values[g_idx]))
+end
+
+"Fast path: O(1) canonicalization via CanonicalMap"
+@inline function _project_fast(m::Mask, basis::Symmetry_Sector_Basis, cmap::CanonicalMap)
+    repr, g_idx, α = get_canonical(cmap, m)
+    idx = _basis_index(basis, repr)
+    idx == 0 && return nothing
+    return (idx, α * conj(basis.irrep.values[g_idx]))
+end
+
+"Generic dispatch"
+@inline function project_to_sector(m::Mask, basis::Symmetry_Sector_Basis,
+    stats_or_cmap::Union{Statistics,CanonicalMap})
+    if stats_or_cmap isa CanonicalMap
+        return _project_fast(m, basis, stats_or_cmap)
+    else
+        return _project_slow(m, basis, stats_or_cmap)
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 11. Matrix-free Hamiltonian application — the core Lanczos operation
+# ═══════════════════════════════════════════════════════════════════════════
+
+@inline hopping_phase_for_stats(::Bosonic, ::Mask, ::Int, ::Int)::ComplexF64 = COMPLEX_ONE
+
+@inline function hopping_phase_for_stats(::Fermionic, m::Mask, i_from::Int, i_to::Int)::ComplexF64
+    i_from == i_to && return COMPLEX_ONE
+    lo = min(i_from, i_to)
+    hi = max(i_from, i_to)
+    between = hi - lo <= 1 ? zero(Mask) : (((one(Mask) << (hi - lo - 1)) - one(Mask)) << lo)
+    return isodd(count_ones(m & between)) ? -COMPLEX_ONE : COMPLEX_ONE
+end
+
+function _matrixfree_buffers(n::Int)
+    return [zeros(ComplexF64, n) for _ in 1:Threads.maxthreadid()]
+end
+
+struct MatrixFreeHamiltonian
+    basis::Symmetry_Sector_Basis
+    bilinear_terms::Vector{Tuple{Int,Int,ComplexF64}}
+    density_terms::Vector{Tuple{Int,Int,ComplexF64}}
+    cmap::CanonicalMap
+    y_threads::Vector{Vector{ComplexF64}}
+end
+
+function MatrixFreeHamiltonian(
+    basis::Symmetry_Sector_Basis,
+    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    cmap::CanonicalMap,
+)
+    n = length(basis.representative_mask_list)
+    bilin = [(i, j, ComplexF64(t)) for (i, j, t) in bilinear_terms]
+    density = [(i, j, ComplexF64(v)) for (i, j, v) in density_terms]
+    return MatrixFreeHamiltonian(basis, bilin, density, cmap, _matrixfree_buffers(n))
+end
+
+"""
+    apply_hamiltonian!(y, x, basis, bilinear_terms, density_terms, cmap)
+
+Compute y = H·x on-the-fly.  No sparse matrix is ever stored.
+
+Uses `Threads.@threads` with per-thread accumulation buffers for race-free
+shared-memory parallelism (equivalent to XDiag's OpenMP backend).
+
+The `cmap::CanonicalMap` must be pre-populated via `populate_canonical_map!`
+before the first call.
+"""
+function apply_hamiltonian!(y::Vector{ComplexF64}, x::Vector{ComplexF64},
+    basis::Symmetry_Sector_Basis,
+    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    cmap::CanonicalMap)
+    y_threads = _matrixfree_buffers(length(x))
+    return apply_hamiltonian!(y, x, basis, bilinear_terms, density_terms, cmap, y_threads)
+end
+
+function apply_hamiltonian!(y::Vector{ComplexF64}, x::Vector{ComplexF64},
+    basis::Symmetry_Sector_Basis,
+    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    cmap::CanonicalMap,
+    y_threads::Vector{Vector{ComplexF64}})
+    n = length(x)
+    @assert length(y) == n
+
+    max_tid = Threads.maxthreadid()
+    length(y_threads) < max_tid && error("not enough thread-local buffers")
+    @inbounds for tid in 1:max_tid
+        fill!(y_threads[tid], 0)
+    end
+
+    Threads.@threads :static for col in 1:n
+        tid = Threads.threadid()
+        yt = y_threads[tid]
+        x_col = x[col]
+        x_col == 0 && continue
+
+        repr_mask = basis.representative_mask_list[col]
+        stab_col = basis.stabilizer_order_list[col]
+        inv_sqrt_stab_col = 1.0 / sqrt(stab_col)
+
+        # ── Diagonal (density-density interactions) ──
+        H_diag = zero(ComplexF64)
+        for (i, j, V) in density_terms
+            if is_site_occupied(repr_mask, i) && is_site_occupied(repr_mask, j)
+                H_diag += V
+            end
+        end
+        yt[col] += H_diag * x_col
+
+        # ── Off-diagonal (hopping) ──
+        for (i_from, i_to, t) in bilinear_terms
+            if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
+                new_mask = empty_site_for_mask(repr_mask, i_from)
+                new_mask = occupy_site_for_mask(new_mask, i_to)
+
+                proj = _project_fast(new_mask, basis, cmap)
+                proj === nothing && continue
+
+                row, coeff = proj
+                stab_row = basis.stabilizer_order_list[row]
+                hop_phase = hopping_phase_for_stats(cmap.statistics, repr_mask, i_from, i_to)
+                # H_{row,col} = t × coeff × √(|Stab(row)| / |Stab(col)|)
+                H_elem = t * hop_phase * coeff * sqrt(stab_row) * inv_sqrt_stab_col
+                yt[row] += H_elem * x_col
+            end
+        end
+    end
+
+    # ── Reduce thread-local buffers → y ──
+    fill!(y, 0)
+    @inbounds for tid in 1:max_tid
+        yt = y_threads[tid]
+        for i in 1:n
+            y[i] += yt[i]
+        end
+    end
+    return y
+end
+
+function (H::MatrixFreeHamiltonian)(x::Vector{ComplexF64})
+    y = similar(x)
+    apply_hamiltonian!(y, x, H.basis, H.bilinear_terms, H.density_terms, H.cmap, H.y_threads)
+    return y
+end
+
+"""
+    hamiltonian_linear_operator(basis, bilinear_terms, density_terms, cmap)
+
+Return a closure `H_op(x) -> y` suitable for iterative eigensolvers (KrylovKit, Arpack).
+"""
+function hamiltonian_linear_operator(basis::Symmetry_Sector_Basis,
+    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    cmap::CanonicalMap)
+    n = length(basis.representative_mask_list)
+    return MatrixFreeHamiltonian(basis, bilinear_terms, density_terms, cmap), n
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 12. Sparse-matrix construction (matrix mode)
+# ═══════════════════════════════════════════════════════════════════════════
+
+function build_ed_Hamiltonian_symmetry_block(
+    basis::Symmetry_Sector_Basis,
+    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    statistics::Statistics,
+)::SparseMatrixCSC{ComplexF64,Int}
+    sector_dim = length(basis.representative_mask_list)
+    print("\tBuilding H block (matrix mode) @ irrep $(basis.irrep.label) (dim=$sector_dim) ... ")
+
+    Is = Int[]
+    Js = Int[]
+    Vs = ComplexF64[]
+    est_nnz = 1 + 4 * basis.symmetry.n_site
+    sizehint!(Is, sector_dim * est_nnz)
+    sizehint!(Js, sector_dim * est_nnz)
+    sizehint!(Vs, sector_dim * est_nnz)
+
+    res = @timed begin
+        @inbounds for (col, repr_mask) in enumerate(basis.representative_mask_list)
+            stab_col = basis.stabilizer_order_list[col]
+
+            # Diagonal
+            H_diag = zero(ComplexF64)
+            for (i, j, V) in density_terms
+                if is_site_occupied(repr_mask, i) && is_site_occupied(repr_mask, j)
+                    H_diag += V
+                end
+            end
+            push!(Is, col)
+            push!(Js, col)
+            push!(Vs, H_diag)
+
+            # Off-diagonal
+            for (i_from, i_to, t) in bilinear_terms
+                if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
+                    new_mask = empty_site_for_mask(repr_mask, i_from)
+                    new_mask = occupy_site_for_mask(new_mask, i_to)
+                    proj = _project_slow(new_mask, basis, statistics)
+                    proj === nothing && continue
+                    row, coeff = proj
+                    stab_row = basis.stabilizer_order_list[row]
+                    hop_phase = hopping_phase_for_stats(statistics, repr_mask, i_from, i_to)
+                    H_elem = t * hop_phase * coeff * sqrt(stab_row / stab_col)
+                    push!(Is, row)
+                    push!(Js, col)
+                    push!(Vs, H_elem)
+                end
+            end
+        end
+    end
+
+    H = sparse(Is, Js, Vs, sector_dim, sector_dim)
+    dropzeros!(H)
+    nnz_H = nnz(H)
+    sparsity = sector_dim == 0 ? 0.0 : nnz_H / (sector_dim^2)
+    printstyled("Done. nnz=$nnz_H, sparsity=$(round(sparsity,digits=6)). t=$(round(res.time,digits=3))s\n", bold=true)
+    return H
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 13. Diagonalization helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+function diagonalize_block_dense(H::SparseMatrixCSC{ComplexF64,Int}; nev::Int=5)
+    n = size(H, 1)
+    n == 0 && return Float64[], Matrix{ComplexF64}(undef, 0, 0)
+    H_dense = Hermitian(Matrix(H))
+    vals, vecs = eigen(H_dense)
+    k = min(nev, length(vals))
+    return real.(vals[1:k]), vecs[:, 1:k]
+end
+
+function diagonalize_block_arpack(H::SparseMatrixCSC{ComplexF64,Int}; nev::Int=5)
+    n = size(H, 1)
+    n == 0 && return Float64[], Matrix{ComplexF64}(undef, 0, 0)
+    # Temporarily set BLAS threads = nprocs() for diagonalization (HPC: one per worker)
+    blas_th = max(1, nprocs())
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(blas_th)
+    try
+        if n <= 300
+            return diagonalize_block_dense(H; nev=nev)
+        else
+            vals, vecs, _ = eigs(H; nev=nev, which=:SR)
+            return real.(vals), Matrix(vecs)
+        end
+    finally
+        BLAS.set_num_threads(1)  # restore HPC default
+    end
+end
+
+"Diagonalize using matrix-free Lanczos (KrylovKit)"
+function diagonalize_block_matrixfree(H_op!, n::Int; nev::Int=5)
+    n == 0 && return Float64[], Matrix{ComplexF64}(undef, 0, 0)
+    # Temporarily set BLAS threads = nprocs() for diagonalization
+    blas_th = max(1, nprocs())
+    old_blas = BLAS.get_num_threads()
+    BLAS.set_num_threads(blas_th)
+    try
+        if n <= 300
+            # Build dense matrix for small sectors
+            H_dense = Matrix{ComplexF64}(undef, n, n)
+            x = zeros(ComplexF64, n)
+            for j in 1:n
+                x[j] = 1.0
+                y = H_op!(x)
+                H_dense[:, j] .= y
+                x[j] = 0.0
+            end
+            H_herm = Hermitian(H_dense)
+            vals, vecs = eigen(H_herm)
+            k = min(nev, length(vals))
+            return real.(vals[1:k]), vecs[:, 1:k]
+        else
+            # Use KrylovKit for large sectors
+            x0 = randn(ComplexF64, n)
+            x0 ./= norm(x0)
+            vals, vecs, info = KrylovKit.eigsolve(H_op!, x0, nev, :SR; tol=1e-10, maxiter=300)
+            return real.(vals), hcat(vecs...)
+        end
+    finally
+        BLAS.set_num_threads(1)  # restore HPC default
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 14. High-level ED data structure
+# ═══════════════════════════════════════════════════════════════════════════
+
+mutable struct Symmetry_Resolved_ED_Data
+    model::ShortRange_Real_Space_Second_Quantized_Model
+    n_filled::Int
+    filling_fraction::Rational{Int}
+    symmetry::Finite_Symmetry_Group
+    irrep_list::Vector{OneDim_Irrep}
+    orbit_catalog::Symmetry_Orbit_Catalog
+    sector_dims::Vector{Int}
+    ed_scan_res::Dict{Int,Tuple{Vector{Float64},Matrix{ComplexF64}}}
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 15. ED scan — matrix mode (stores sparse H)
+# ═══════════════════════════════════════════════════════════════════════════
+
+function ed_scan_at_irrep_matrix!(irrep_label, ed_data::Symmetry_Resolved_ED_Data; nev::Int=5)
+    irrep_idx = findfirst(irrep -> irrep.label == irrep_label, ed_data.irrep_list)
+    @assert irrep_idx !== nothing
+
+    irrep = ed_data.irrep_list[irrep_idx]
+    statistics = ed_data.model.statistics
+    basis = build_symmetry_sector_basis(ed_data.orbit_catalog, irrep)
+    ed_data.sector_dims[irrep_idx] = length(basis.representative_mask_list)
+
+    # Use distributed construction when workers are available (HPC)
+    if nprocs() > 1 && ed_data.sector_dims[irrep_idx] > 500
+        H = build_ed_Hamiltonian_symmetry_block_distributed(basis, ed_data.model.bilinear_terms,
+            ed_data.model.density_density_terms, statistics)
+    else
+        H = build_ed_Hamiltonian_symmetry_block(basis, ed_data.model.bilinear_terms,
+            ed_data.model.density_density_terms, statistics)
+    end
+    vals, vecs = diagonalize_block_arpack(H; nev=nev)
+    ed_data.ed_scan_res[irrep_idx] = (vals, vecs)
+    H = nothing
+    GC.gc(true)  # force GC after each sector to avoid memory pressure accumulation
+    return vals, vecs
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 16. ED scan — matrix-free mode (on-the-fly Lanczos, XDiag-style)
+# ═══════════════════════════════════════════════════════════════════════════
+
+function ed_scan_at_irrep_matrixfree!(irrep_label, ed_data::Symmetry_Resolved_ED_Data;
+    nev::Int=5, use_distributed::Bool=false)
+    irrep_idx = findfirst(irrep -> irrep.label == irrep_label, ed_data.irrep_list)
+    @assert irrep_idx !== nothing
+
+    irrep = ed_data.irrep_list[irrep_idx]
+    statistics = ed_data.model.statistics
+    basis = build_symmetry_sector_basis(ed_data.orbit_catalog, irrep)
+    sector_dim = length(basis.representative_mask_list)
+    ed_data.sector_dims[irrep_idx] = sector_dim
+
+    if sector_dim == 0
+        ed_data.ed_scan_res[irrep_idx] = (Float64[], Matrix{ComplexF64}(undef, 0, 0))
+        return Float64[], Matrix{ComplexF64}(undef, 0, 0)
+    end
+
+    print("\tMatrix-free mode @ irrep $(irrep.label) (dim=$sector_dim, threads=$(Threads.nthreads())) ... ")
+
+    bilinear = ed_data.model.bilinear_terms
+    density = ed_data.model.density_density_terms
+
+    res = @timed begin
+        # Build and populate CanonicalMap
+        cmap = CanonicalMap(ed_data.symmetry, statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
+        populate_canonical_map!(cmap, basis, bilinear)
+
+        # Create the linear operator. The distributed variant avoids @everywhere;
+        # workers are loaded through ensure_distributed_workers_loaded!().
+        H_op, n = if use_distributed && nprocs() > 1
+            hamiltonian_linear_operator_distributed(basis, bilinear, density, cmap)
+        else
+            hamiltonian_linear_operator(basis, bilinear, density, cmap)
+        end
+        vals, vecs = diagonalize_block_matrixfree(H_op, n; nev=nev)
+    end
+    printstyled("Done. t=$(round(res.time,digits=3))s\n", bold=true)
+
+    ed_data.ed_scan_res[irrep_idx] = (vals, vecs)
+    cmap = nothing
+    GC.gc(true)  # force GC after each sector (CanonicalMap can be large)
+    return vals, vecs
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 17. Distributed matrix construction (HPC: pmap across workers)
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    build_ed_Hamiltonian_symmetry_block_distributed(basis, bilinear, density, stats)
+        -> SparseMatrixCSC
+
+Build the Hamiltonian matrix using `Distributed.pmap`: each worker processes a
+chunk of the representative masks in parallel.  Used on HPC clusters where
+the matrix is too large to build on a single node.
+"""
+function build_ed_Hamiltonian_symmetry_block_distributed(
+    basis::Symmetry_Sector_Basis,
+    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    statistics::Statistics,
+)::SparseMatrixCSC{ComplexF64,Int}
+    sector_dim = length(basis.representative_mask_list)
+    if sector_dim == 0
+        return spzeros(ComplexF64, Int, 0, 0)
+    end
+    if nprocs() == 1
+        return build_ed_Hamiltonian_symmetry_block(basis, bilinear_terms, density_terms, statistics)
+    end
+    ensure_distributed_workers_loaded!()
+
+    nw = nworkers()
+    chunk_size = cld(sector_dim, nw)
+    col_ranges = [r[1]:r[end] for r in Iterators.partition(1:sector_dim, chunk_size)]
+    pool = CachingPool(workers())
+
+    print("\tBuilding H block (distributed, $nw workers) @ irrep $(basis.irrep.label) (dim=$sector_dim) ... ")
+
+    res = @timed begin
+        results = pmap(pool, col_ranges) do rng
+            Is = Int[]
+            Js = Int[]
+            Vs = ComplexF64[]
+            est_nnz = 1 + 4 * basis.symmetry.n_site
+            sizehint!(Is, length(rng) * est_nnz)
+            sizehint!(Js, length(rng) * est_nnz)
+            sizehint!(Vs, length(rng) * est_nnz)
+            @inbounds for col in rng
+                repr_mask = basis.representative_mask_list[col]
+                stab_col = basis.stabilizer_order_list[col]
+                H_diag = zero(ComplexF64)
+                for (i, j, V) in density_terms
+                    if is_site_occupied(repr_mask, i) && is_site_occupied(repr_mask, j)
+                        H_diag += V
+                    end
+                end
+                push!(Is, col)
+                push!(Js, col)
+                push!(Vs, H_diag)
+                for (i_from, i_to, t) in bilinear_terms
+                    if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
+                        new_mask = empty_site_for_mask(repr_mask, i_from)
+                        new_mask = occupy_site_for_mask(new_mask, i_to)
+                        proj = _project_slow(new_mask, basis, statistics)
+                        proj === nothing && continue
+                        row, coeff = proj
+                        stab_row = basis.stabilizer_order_list[row]
+                        hop_phase = hopping_phase_for_stats(statistics, repr_mask, i_from, i_to)
+                        H_elem = t * hop_phase * coeff * sqrt(stab_row / stab_col)
+                        push!(Is, row)
+                        push!(Js, col)
+                        push!(Vs, H_elem)
+                    end
+                end
+            end
+            return (Is, Js, Vs)
+        end
+    end
+
+    Is = reduce(vcat, getindex.(results, 1))
+    Js = reduce(vcat, getindex.(results, 2))
+    Vs = reduce(vcat, getindex.(results, 3))
+    H = sparse(Is, Js, Vs, sector_dim, sector_dim)
+    dropzeros!(H)
+    GC.gc(true)
+
+    nnz_H = nnz(H)
+    sparsity = sector_dim == 0 ? 0.0 : nnz_H / (sector_dim^2)
+    printstyled("Done. nnz=$nnz_H, sparsity=$(round(sparsity,digits=6)). t=$(round(res.time,digits=3))s\n", bold=true)
+    return H
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 17c. Distributed matrix-free H|ψ⟩ (HPC: pmap column chunks)
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    apply_hamiltonian_distributed!(y, x, basis, bilinear, density, cmap)
+
+Distributed variant of `apply_hamiltonian!`: each worker computes its chunk
+of columns, partial results are reduced on the master.
+
+The `cmap` is broadcast to all workers so they can look up canonical
+representatives without network round-trips.
+"""
+function apply_hamiltonian_distributed!(y::Vector{ComplexF64}, x::Vector{ComplexF64},
+    basis::Symmetry_Sector_Basis,
+    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    cmap::CanonicalMap)
+    n = length(x)
+    if nprocs() == 1
+        return apply_hamiltonian!(y, x, basis, bilinear_terms, density_terms, cmap)
+    end
+    nw = nworkers()
+    ensure_distributed_workers_loaded!()
+
+    chunk_size = cld(n, nw)
+    col_ranges = [r[1]:r[end] for r in Iterators.partition(1:n, chunk_size)]
+    pool = CachingPool(workers())
+
+    results = pmap(pool, col_ranges) do rng
+        y_part = zeros(ComplexF64, n)
+        @inbounds for col in rng
+            x_col = x[col]
+            x_col == 0 && continue
+            repr_mask = basis.representative_mask_list[col]
+            stab_col = basis.stabilizer_order_list[col]
+            inv_sqrt_stab_col = 1.0 / sqrt(stab_col)
+
+            H_diag = zero(ComplexF64)
+            for (i, j, V) in density_terms
+                if is_site_occupied(repr_mask, i) && is_site_occupied(repr_mask, j)
+                    H_diag += V
+                end
+            end
+            y_part[col] += H_diag * x_col
+
+            for (i_from, i_to, t) in bilinear_terms
+                if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
+                    new_mask = empty_site_for_mask(repr_mask, i_from)
+                    new_mask = occupy_site_for_mask(new_mask, i_to)
+                    proj = _project_fast(new_mask, basis, cmap)
+                    proj === nothing && continue
+                    row, coeff = proj
+                    stab_row = basis.stabilizer_order_list[row]
+                    hop_phase = hopping_phase_for_stats(cmap.statistics, repr_mask, i_from, i_to)
+                    H_elem = t * hop_phase * coeff * sqrt(stab_row) * inv_sqrt_stab_col
+                    y_part[row] += H_elem * x_col
+                end
+            end
+        end
+        return y_part
+    end
+
+    fill!(y, 0)
+    for yp in results
+        y .+= yp
+    end
+    return y
+end
+
+"""
+    hamiltonian_linear_operator_distributed(basis, bilinear, density, cmap)
+
+Return a distributed linear operator `H_op(x) -> y` using `pmap` column chunks.
+"""
+function hamiltonian_linear_operator_distributed(basis::Symmetry_Sector_Basis,
+    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    cmap::CanonicalMap)
+    n = length(basis.representative_mask_list)
+    function H_op(x::Vector{ComplexF64})
+        y = similar(x)
+        fill!(y, 0)
+        apply_hamiltonian_distributed!(y, x, basis, bilinear_terms, density_terms, cmap)
+        return y
+    end
+    return H_op, n
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 17d. Checkpoint support (HPC preemption resilience)
+# ═══════════════════════════════════════════════════════════════════════════
+
+"Save ED data to a checkpoint file using JLD2"
+function save_checkpoint(ed_data::Symmetry_Resolved_ED_Data, path::String)
+    mkpath(dirname(path))
+    @save path ed_data
+    return nothing
+end
+
+"Load ED data from a checkpoint file"
+function load_checkpoint(path::String)::Symmetry_Resolved_ED_Data
+    @load path ed_data
+    return ed_data
+end
+
+"""
+    ed_scan!(ed_data; nev=5, mode=:matrix, checkpoint_path=nothing)
+
+Extended with checkpoint support.  If `checkpoint_path` is provided, the full
+`ed_data` is serialized to disk after each completed symmetry sector, enabling
+resume after HPC preemption.
+
+To resume: load the checkpoint with `load_checkpoint(path)`, then call
+`ed_scan!` again — previously-computed sectors are automatically skipped.
+"""
+function ed_scan!(ed_data::Symmetry_Resolved_ED_Data; nev::Int=5, mode::Symbol=:matrix,
+    checkpoint_path::Union{String,Nothing}=nothing, use_distributed::Bool=false)
+    n_total = length(ed_data.irrep_list)
+    n_done = length(ed_data.ed_scan_res)
+    n_done > 0 && println("[ED scan] $(n_done)/$(n_total) sectors already computed; resuming.")
+
+    for (irrep_idx, irrep) in enumerate(ed_data.irrep_list)
+        haskey(ed_data.ed_scan_res, irrep_idx) && continue
+        println("[ED scan] Sector $(irrep_idx)/$(n_total) — irrep $(irrep.label)  [mode=$mode]")
+        flush(stdout)
+        if mode == :matrixfree
+            ed_scan_at_irrep_matrixfree!(irrep.label, ed_data; nev=nev, use_distributed=use_distributed)
+        elseif mode == :matrix
+            ed_scan_at_irrep_matrix!(irrep.label, ed_data; nev=nev)
+        else
+            error("Unknown ED scan mode: $mode. Use :matrix or :matrixfree.")
+        end
+
+        # Checkpoint after every sector
+        if checkpoint_path !== nothing
+            save_checkpoint(ed_data, checkpoint_path)
+            println("    [checkpoint → $(checkpoint_path)]")
+        end
+    end
+    return ed_data.ed_scan_res
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 18. Pre-built symmetry groups
+# ═══════════════════════════════════════════════════════════════════════════
+
+function build_identity_group(n_site::Int)::Finite_Symmetry_Group
+    id_op = Symmetry_Operation(:identity, collect(1:n_site))
+    return Finite_Symmetry_Group("identity", [id_op]; identity_idx=1)
+end
+
+function build_translation_group(lattice::TightBinding.Real_Space_Lattice)::Finite_Symmetry_Group
+    n_site = lattice.n_site
+    L1, L2 = lattice.sample_size
+    ops = Symmetry_Operation{Tuple{Int,Int}}[]
+    for dx in 0:(L1-1), dy in 0:(L2-1)
+        perm = Vector{Int}(undef, n_site)
+        @inbounds for (i, (cell_int, isub)) in enumerate(lattice.site_list)
+            shifted_cell = mod.(cell_int .+ [dx, dy], lattice.sample_size)
+            perm[i] = lattice.site_to_index_map[(shifted_cell, isub)]
+        end
+        push!(ops, Symmetry_Operation((dx, dy), perm))
+    end
+    return Finite_Symmetry_Group("translations", ops; identity_idx=1)
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 19. Pre-built irrep lists
+# ═══════════════════════════════════════════════════════════════════════════
+
+function build_identity_irrep_list()::Vector{OneDim_Irrep}
+    return [OneDim_Irrep(:identity, [1.0 + 0.0im])]
+end
+
+function build_translation_irrep_list(G::Finite_Symmetry_Group,
+    lattice::TightBinding.Real_Space_Lattice)::Vector{OneDim_Irrep{Tuple{Int,Int}}}
+    @assert G.name == "translations" && group_order(G) == prod(lattice.sample_size)
+    L1, L2 = lattice.sample_size
+    irrep_list = OneDim_Irrep{Tuple{Int,Int}}[]
+    for k1 in 0:(L1-1), k2 in 0:(L2-1)
+        χ_list = ComplexF64[]
+        sizehint!(χ_list, group_order(G))
+        for op in G.operations
+            dx, dy = op.label
+            push!(χ_list, cis(2π * (k1 * dx / L1 + k2 * dy / L2)))
+        end
+        push!(irrep_list, OneDim_Irrep((k1, k2), χ_list))
+    end
+    return irrep_list
+end
+
+function build_irrep_list(G::Finite_Symmetry_Group, lattice::TightBinding.Real_Space_Lattice)::Vector{<:OneDim_Irrep}
+    if G.name == "identity"
+        return build_identity_irrep_list()
+    elseif G.name == "translations"
+        return build_translation_irrep_list(G, lattice)
+    else
+        error("Irrep construction for group '$(G.name)' is not yet implemented.")
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 20. Convenience constructors
+# ═══════════════════════════════════════════════════════════════════════════
+
+function build_ed_data(model::ShortRange_Real_Space_Second_Quantized_Model;
+    filling_fraction::Rational{Int}=1 // 2,
+    symmetry::Finite_Symmetry_Group)::Symmetry_Resolved_ED_Data
+    n_site = model.lattice.n_site
+    n_filled = Int(filling_fraction * n_site)
+    @assert denominator(filling_fraction) * n_filled == numerator(filling_fraction) * n_site
+
+    irrep_list = build_irrep_list(symmetry, model.lattice)
+    catalog = build_symmetry_orbit_catalog(; model=model, n_filled=n_filled,
+        symmetry=symmetry, statistics=model.statistics)
+    sector_dims = zeros(Int, length(irrep_list))
+    ed_scan_res = Dict{Int,Tuple{Vector{Float64},Matrix{ComplexF64}}}()
+
+    return Symmetry_Resolved_ED_Data(model, n_filled, filling_fraction, symmetry,
+        irrep_list, catalog, sector_dims, ed_scan_res)
+end
+
+function full_ed(model::ShortRange_Real_Space_Second_Quantized_Model, n_filled::Int; nev::Int=5)
+    symmetry = build_identity_group(model.lattice.n_site)
+    ed_data = build_ed_data(model; filling_fraction=n_filled // model.lattice.n_site, symmetry=symmetry)
+    ed_scan!(ed_data; nev=nev)
+    return ed_data.ed_scan_res[1]
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 21. Utility: print & plot spectrum
+# ═══════════════════════════════════════════════════════════════════════════
+
+function print_spectrum(ed_data::Symmetry_Resolved_ED_Data; shift_to_zero::Bool=true)
+    scanned = sort(collect(keys(ed_data.ed_scan_res)))
+    isempty(scanned) && return
+    n_irrep = length(ed_data.irrep_list)
+    # Determine max nev across all scanned sectors (may differ per sector)
+    nev = maximum(length(ed_data.ed_scan_res[i][1]) for i in scanned; init=0)
+    spec = fill(NaN, n_irrep, nev)
+    for irrep_idx in scanned
+        vals = ed_data.ed_scan_res[irrep_idx][1]
+        spec[irrep_idx, 1:length(vals)] = vals
+    end
+    if shift_to_zero
+        finite = spec[.!isnan.(spec)]
+        !isempty(finite) && (spec .-= minimum(finite))
+    end
+    println("ED Spectrum (rows = irrep, cols = eigenvalue #):")
+    for irrep_idx in 1:n_irrep
+        label = ed_data.irrep_list[irrep_idx].label
+        vals_str = join([isnan(spec[irrep_idx, e]) ? "  NaN" : @sprintf("%.8f", spec[irrep_idx, e]) for e in 1:nev], "  ")
+        println("  [$irrep_idx] $(repr(label)): $vals_str")
+    end
+    return spec
+end
+
+function plot_spectrum(ed_data::Symmetry_Resolved_ED_Data; shift_to_zero::Bool=true)
+    scanned = sort(collect(keys(ed_data.ed_scan_res)))
+    isempty(scanned) && return
+    n_irrep = length(ed_data.irrep_list)
+    # Determine max nev across all scanned sectors (may differ per sector)
+    nev = maximum(length(ed_data.ed_scan_res[i][1]) for i in scanned; init=0)
+    spec = fill(NaN, n_irrep, nev)
+    for irrep_idx in scanned
+        vals = ed_data.ed_scan_res[irrep_idx][1]
+        spec[irrep_idx, 1:length(vals)] = vals
+    end
+    if shift_to_zero
+        finite = spec[.!isnan.(spec)]
+        !isempty(finite) && (spec .-= minimum(finite))
+    end
+    fig = Figure(size=(600, 400))
+    ax = Axis(fig[1, 1]; xlabel="Irrep index", ylabel="E",
+        title="ED Spectrum — $(ed_data.model.lattice.sample_size), ν=$(ed_data.filling_fraction)",
+        xticks=0:2:(n_irrep-1), xminorticksvisible=true, yminorticksvisible=true)
+    for k in 1:n_irrep, e in 1:nev
+        val = spec[k, e]
+        !isnan(val) && scatter!(ax, k - 1, val; color=:royalblue1, markersize=14, alpha=0.75,
+            strokecolor=:blue, strokewidth=0.5)
+    end
+    return fig, ax
+end
