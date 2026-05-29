@@ -276,8 +276,8 @@ function run_benchmarks()
             ed = build_heisenberg_ed(N)
             t_elapsed, dim, e0 = time_single_sector!(ed, mode)
             push!(all_rows, BenchRow(
-                "Heisenberg", "N=$N", ed.model.lattice.n_site, ed.n_filled,
-                binomial(ed.model.lattice.n_site, ed.n_filled),
+                "Heisenberg", "N=$N", ed.second_quantized_model.lattice.n_site, ed.n_filled,
+                binomial(ed.second_quantized_model.lattice.n_site, ed.n_filled),
                 length(ed.orbit_catalog.representative_mask_list),
                 length(ed.symmetry.operations), dim, string(mode), t_elapsed, e0,
             ))
@@ -294,8 +294,8 @@ function run_benchmarks()
             ed = build_haldane_ed(ss)
             t_elapsed, dim, e0 = time_single_sector!(ed, mode)
             push!(all_rows, BenchRow(
-                "Haldane_Boson", "$(ss[1])×$(ss[2])", ed.model.lattice.n_site, ed.n_filled,
-                binomial(ed.model.lattice.n_site, ed.n_filled),
+                "Haldane_Boson", "$(ss[1])×$(ss[2])", ed.second_quantized_model.lattice.n_site, ed.n_filled,
+                binomial(ed.second_quantized_model.lattice.n_site, ed.n_filled),
                 length(ed.orbit_catalog.representative_mask_list),
                 length(ed.symmetry.operations), dim, string(mode), t_elapsed, e0,
             ))
@@ -312,8 +312,8 @@ function run_benchmarks()
             ed = build_hubbard_ed(ss)
             t_elapsed, dim, e0 = time_single_sector!(ed, mode)
             push!(all_rows, BenchRow(
-                "Hubbard_Fermion", "$(ss[1])×$(ss[2])", ed.model.lattice.n_site, ed.n_filled,
-                binomial(ed.model.lattice.n_site, ed.n_filled),
+                "Hubbard_Fermion", "$(ss[1])×$(ss[2])", ed.second_quantized_model.lattice.n_site, ed.n_filled,
+                binomial(ed.second_quantized_model.lattice.n_site, ed.n_filled),
                 length(ed.orbit_catalog.representative_mask_list),
                 length(ed.symmetry.operations), dim, string(mode), t_elapsed, e0,
             ))
