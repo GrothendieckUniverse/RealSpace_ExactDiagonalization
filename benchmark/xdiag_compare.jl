@@ -10,12 +10,67 @@ using RealSpace_ExactDiagonalization.BitWise_Operations: Mask
 using TightBinding, LinearAlgebra, Printf, CairoMakie
 using Distributed
 
-include("../src/test.jl")
-using .Test
 
-const PARAMS = Test.params_DNSheng
+const PARAMS = Dict(
+    "t" => 1.0,        # nearest-neighbour hopping
+    "t′" => 0.60,       # next-nearest-neighbour hopping
+    "t′′" => -0.58,       # next-next-nearest-neighbour hopping
+    "ϕ_over_2π" => 0.2,  # flux per 2π (time-reversal breaking)
+    "V1" => 0.0,         # NN density interaction
+    "V2" => 0.0,         # NNN density interaction
+)
 const NEV = 3
 const N_SECTORS = 3
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Build Haldane honeycomb model (reusable, replaces removed test.jl helpers)
+# ═══════════════════════════════════════════════════════════════════════════
+
+"Build the Haldane honeycomb bose-Hubbard model for given sample_size."
+function build_haldane_model(ss::Vector{Int})
+    r_data = TightBinding.initialize_real_space_lattice(;
+        sample_size=ss,
+        brav_vec_list=[[1.0, 0.0], [1 / 2, sqrt(3) / 2]],
+        sub_crys_list=[[0.0, 0.0], [1 / 3, 1 / 3]],
+        lattice_name="Haldane_Honeycomb",
+        pbc_indicator=[true, true],
+    )
+    lattice = r_data
+    tb_model = TightBinding.initialize_real_space_tightbinding_model(lattice; model_name="haldane")
+
+    t, t′, t′′ = PARAMS["t"], PARAMS["t′"], PARAMS["t′′"]
+    ϕ = PARAMS["ϕ_over_2π"]
+    sϕ = 2π * ϕ
+
+    # Nearest-neighbour (inter-sublattice, real)
+    add_hopping_term!(tb_model, (([0, 0], 1), ([0, 0], 2)) => -t; is_hermitian=true)
+    add_hopping_term!(tb_model, (([0, 0], 1), ([0, -1], 2)) => -t; is_hermitian=true)
+    add_hopping_term!(tb_model, (([0, 0], 1), ([-1, 0], 2)) => -t; is_hermitian=true)
+
+    # Next-nearest-neighbour (intra-sublattice, complex)
+    add_hopping_term!(tb_model, (([0, 0], 1), ([1, 0], 1)) => -t′ * exp(im * sϕ); is_hermitian=true)
+    add_hopping_term!(tb_model, (([0, 0], 1), ([0, 1], 1)) => -t′ * exp(-im * sϕ); is_hermitian=true)
+    add_hopping_term!(tb_model, (([0, 0], 1), ([-1, 1], 1)) => -t′ * exp(im * sϕ); is_hermitian=true)
+    add_hopping_term!(tb_model, (([0, 0], 2), ([1, 0], 2)) => -t′ * exp(-im * sϕ); is_hermitian=true)
+    add_hopping_term!(tb_model, (([0, 0], 2), ([0, 1], 2)) => -t′ * exp(im * sϕ); is_hermitian=true)
+    add_hopping_term!(tb_model, (([0, 0], 2), ([-1, 1], 2)) => -t′ * exp(-im * sϕ); is_hermitian=true)
+
+    # Next-next-nearest-neighbour (inter-sublattice, real)
+    add_hopping_term!(tb_model, (([0, 0], 2), ([1, 1], 1)) => -t′′; is_hermitian=true)
+    add_hopping_term!(tb_model, (([1, 0], 1), ([0, 1], 2)) => -t′′; is_hermitian=true)
+    add_hopping_term!(tb_model, (([1, 0], 2), ([0, 1], 1)) => -t′′; is_hermitian=true)
+
+    bilinear_terms = Vector{Tuple{Int,Int,ComplexF64}}()
+    for ((sf, st), tamp) in tb_model.full_hopping_map
+        push!(bilinear_terms, (lattice.site_to_index_map[sf], lattice.site_to_index_map[st], ComplexF64(tamp)))
+    end
+    density_terms = Vector{Tuple{Int,Int,ComplexF64}}()  # V1=V2=0 for benchmark
+
+    model = RealSpace_ExactDiagonalization.Real_Space_Second_Quantized_Model(
+        PARAMS, lattice, tb_model, Bosonic(), bilinear_terms, density_terms,
+    )
+    return model
+end
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Build Haldane honeycomb OpSum for XDiag's Spinhalf block
@@ -94,10 +149,7 @@ end
 function validate_xdiag_fci()
     println("\n=== XDiag FCI Validation [2,3] ===")
     ss = [2, 3]
-    tb = Test.build_bose_hubbard_real_space_tb_model(; sample_size=ss, params=PARAMS)
-    model = Test.initialize_second_quantized_model_for_Haldane_honeycomb_lattice(
-        tb; params=PARAMS, statistics=Bosonic()
-    )
+    model = build_haldane_model(ss)
     n_site = model.lattice.n_site
     n_filled = prod(ss) ÷ 2  # 3 particles
 
@@ -133,8 +185,8 @@ function validate_xdiag_fci()
     println("  Splitting: $(round(e1_sym - e0_sym, digits=6))")
 
     # Compare with our code
-    sym = build_translation_group(model.lattice)
-    ed_data = build_ed_data(model; filling_fraction=n_filled // n_site, symmetry=sym)
+    symmetry_group = build_translation_group(model.lattice)
+    ed_data = build_ed_data(model; filling_fraction=n_filled // n_site, symmetry_group=symmetry_group)
     ed_scan!(ed_data; nev=3, mode=:matrix)
     all_vals = sort!(reduce(vcat, [v for (_, (v, _)) in ed_data.ed_scan_res]))
     println("  Our code (k-resolved): E₀ = $(round(all_vals[1], digits=6)), E₁ = $(round(all_vals[2], digits=6))")
@@ -158,10 +210,7 @@ function bench_xdiag_one(ss::Vector{Int})
     println("XDiag: $sl -> $ns sites, $nf particles")
     println(repeat("=", 60))
 
-    tb = Test.build_bose_hubbard_real_space_tb_model(; sample_size=ss, params=PARAMS)
-    model = Test.initialize_second_quantized_model_for_Haldane_honeycomb_lattice(
-        tb; params=PARAMS, statistics=Bosonic()
-    )
+    model = build_haldane_model(ss)
 
     ops = build_xdiag_opsum(model)
     group = build_xdiag_translation_group(model.lattice)
@@ -185,7 +234,7 @@ function bench_xdiag_one(ss::Vector{Int})
         d == 0 && continue
 
         GC.gc(true)
-        GC.gc(true)
+
         t0 = time()
 
         # Build CSR matrix + diagonalize (XDiag's "matrix" mode)
@@ -218,13 +267,10 @@ function bench_ours_one(ss::Vector{Int}; mode::Symbol=:matrix)
     println("Ours [$mode]: $sl -> $ns sites, $nf particles")
     println(repeat("=", 60))
 
-    tb = Test.build_bose_hubbard_real_space_tb_model(; sample_size=ss, params=PARAMS)
-    model = Test.initialize_second_quantized_model_for_Haldane_honeycomb_lattice(
-        tb; params=PARAMS, statistics=Bosonic()
-    )
-    sym = build_translation_group(model.lattice)
-    nG = length(sym.operations)
-    ed_data = build_ed_data(model; filling_fraction=nf // ns, symmetry=sym)
+    model = build_haldane_model(ss)
+    symmetry_group = build_translation_group(model.lattice)
+    nG = length(symmetry_group.operations)
+    ed_data = build_ed_data(model; filling_fraction=nf // ns, symmetry_group=symmetry_group)
 
     full_dim = binomial(ns, nf)
     n_orbits = length(ed_data.orbit_catalog.representative_mask_list)
@@ -241,16 +287,17 @@ function bench_ours_one(ss::Vector{Int}; mode::Symbol=:matrix)
         dim == 0 && continue
 
         GC.gc(true)
-        GC.gc(true)
+
         t0 = time()
 
         if mode == :matrix
+            cmap = CanonicalMap(symmetry_group, model.statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
             H = build_ed_Hamiltonian_symmetry_block(basis, model.bilinear_terms,
-                model.density_density_terms, model.statistics)
+                model.density_density_terms, cmap)
             vals, _ = diagonalize_block_arpack(H; nev=NEV)
             H = nothing
         else
-            cmap = CanonicalMap(sym, model.statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
+            cmap = CanonicalMap(symmetry_group, model.statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
             populate_canonical_map!(cmap, basis, model.bilinear_terms)
             H_op, n = hamiltonian_linear_operator(basis, model.bilinear_terms,
                 model.density_density_terms, cmap)
@@ -260,7 +307,7 @@ function bench_ours_one(ss::Vector{Int}; mode::Symbol=:matrix)
 
         t = time() - t0
         GC.gc(true)
-        GC.gc(true)
+
         push!(times, t)
         push!(dims, dim)
         ed_data.ed_scan_res[i] = (vals, Matrix{ComplexF64}(undef, 0, 0))
@@ -292,7 +339,6 @@ for ss in SS
     push!(results, bench_xdiag_one(ss))
     push!(results, bench_ours_one(ss; mode=:matrix))
     push!(results, bench_ours_one(ss; mode=:matrixfree))
-    GC.gc(true)
     GC.gc(true)
 end
 
