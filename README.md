@@ -81,8 +81,9 @@ A high-performance, statistics-agnostic Julia implementation similar to the desi
               ┌──────────▼──────────┐          ┌───────────▼──────────┐
               │  Matrix Mode         │          │  Matrix-Free Mode     │
               │                     │          │                      │
-              │  build sparse CSC   │          │  CanonicalMap cache  │
-              │    ↓                │          │    ↓                 │
+              │  CanonicalMap cache │          │  CanonicalMap cache  │
+              │  build sparse CSC   │          │  populate (1×) then  │
+              │    ↓                │          │  Threads.@threads H|ψ⟩│
               │  Arpack eigs        │          │  KrylovKit eigsolve  │
               │                     │          │                      │
               │  Memory: O(nnz)     │          │  Memory: O(dim)      │
@@ -184,6 +185,21 @@ Computed in $O(1)$ via `count_ones(m & between_mask)`.
 
 ---
 
+## ⚠️ Important: Understanding `filling_fraction`
+
+The keyword `filling_fraction` in `build_ed_data` means **particle number per _flattened_ graph vertex**, i.e. `n_filled / n_total_vertices`. This is NOT the same as the "filling per band" used in many condensed-matter communities. The two conventions differ:
+
+| Community / Model | What they call "filling" | `filling_fraction` in this code |
+|---|---|---|
+| **Spinful Hubbard** (2×Lx×Ly vertices) | "half-filling" = 1 electron per spatial site | `filling_fraction = 1//2` (N_e = Lx·Ly out of 2·Lx·Ly) |
+| **FCI / bosonic Hubbard** (2×Lx×Ly vertices) | "ν = 1/2 per band" = 1/4 of all graph sites | `filling_fraction = 1//4` (e.g. 3//12 for 2×3) |
+| **Spinless fermions** (Lx×Ly vertices) | "half-filling" = N/2 particles | `filling_fraction = 1//2` |
+| **Spin-½ Heisenberg chain** (N vertices) | "half-filling" = N/2 bosons | `filling_fraction = 1//2` |
+
+> **Rule of thumb**: Always compute `filling_fraction = N_particles / N_total_graph_vertices`. Count ALL internal degrees of freedom (spin, sublattice, band, etc.) as separate graph vertices.
+
+---
+
 ## Quick Start
 
 ```julia
@@ -191,15 +207,33 @@ using RealSpace_ExactDiagonalization
 using TightBinding
 
 # ── Build the Haldane honeycomb model (2×3 unit cells, 3 hard-core bosons) ──
-tb_model = build_bose_hubbard_real_space_tb_model(; sample_size=[2, 3], params=params)
-second_quantized_model = initialize_second_quantized_model_for_Haldane_honeycomb_lattice(
-    tb_model; params, statistics=Bosonic()
-)
+# Step 1: real-space lattice
+r_data = TightBinding.initialize_real_space_lattice(;
+    sample_size=[2, 3],
+    brav_vec_list=[[1.0, 0.0], [1/2, sqrt(3)/2]],
+    sub_crys_list=[[0.0, 0.0], [1/3, 1/3]],
+    lattice_name="Haldane_Honeycomb", pbc_indicator=[true, true])
+lattice = r_data
+
+# Step 2: tight-binding model with hoppings
+tb = TightBinding.initialize_real_space_tightbinding_model(lattice; model_name="haldane")
+t, t′, t′′, ϕ = 1.0, 0.60, -0.58, 0.2
+add_hopping_term!(tb, (([0,0],1),([0,0],2)) => -t; is_hermitian=true)
+add_hopping_term!(tb, (([0,0],1),([0,-1],2)) => -t; is_hermitian=true)
+add_hopping_term!(tb, (([0,0],1),([-1,0],2)) => -t; is_hermitian=true)
+# ... (see examples/boson_fci_haldane.jl for full set)
+
+# Step 3: assemble second-quantized model
+bilinear_terms = [(lattice.site_to_index_map[sf], lattice.site_to_index_map[st], ComplexF64(t))
+                  for ((sf,st),t) in tb.full_hopping_map]
+second_quantized_model = Real_Space_Second_Quantized_Model(
+    Dict("t"=>t), lattice, tb, Bosonic(), bilinear_terms, Tuple{Int,Int,ComplexF64}[])
 
 # ── Translation symmetry: |G| = 6 ──
-symmetry = build_translation_group(second_quantized_model.lattice)
+symmetry = build_translation_group(lattice)
 
-# ── Build ED data at ν = 1/2 per band ──
+# ── Build ED data: 3 bosons / 12 graph vertices = filling_fraction 3//12 ──
+#    (⚠️ NOT ν=1/2 per band — that would be 6 bosons!)
 ed_data = build_ed_data(second_quantized_model; filling_fraction=3//12, symmetry_group=symmetry)
 
 # ── Scan all momentum sectors (matrix-free, 8 threads) ──

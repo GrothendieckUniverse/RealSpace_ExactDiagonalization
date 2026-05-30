@@ -1129,7 +1129,21 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 # 20. Convenience constructors
 # ═══════════════════════════════════════════════════════════════════════════
-"constructor for `Symmetry_Resolved_ED_Data`"
+"""
+Core Constructor for `Symmetry_Resolved_ED_Data <: ED_Data`
+---
+by internally call `build_symmetry_orbit_catalog`, `build_irrep_list`, etc.
+
+- Args:
+    - `second_quantized_model::Real_Space_Second_Quantized_Model`
+- Named Args:
+    - `filling_fraction::Rational{Int}=1//2`: the filling per FLATTENED VERTICES!
+    - `symmetry_group::Finite_Symmetry_Group=build_identity_group(second_quantized_model
+
+**Note:** Here `filling_fraction` is the *particle number per _flatten_ed vertex*. For example:
+- For a spinful Hubbard model with 2×(Lx·Ly) vertices, the so-called "half-filling" means site-filling, i.e., one particle per vertex → `filling_fraction=1//2`.
+- For most fractional Chern insulator communities, such as the bose Hubbard model over Haldane honeycomb lattice, or the spinless fermoinic Hubbard model over checkerboard lattice, the filling is per band!!!
+"""
 function build_ed_data(second_quantized_model::Real_Space_Second_Quantized_Model;
     filling_fraction::Rational{Int}=1 // 2,
     symmetry_group::Finite_Symmetry_Group
