@@ -114,7 +114,7 @@ function test_bose_hubbard()
         end
     end
 
-    model = RealSpace_ExactDiagonalization.ShortRange_Real_Space_Second_Quantized_Model(
+    second_quantized_model = RealSpace_ExactDiagonalization.Real_Space_Second_Quantized_Model(
         PARAMS, lattice, tb_model, Bosonic(), bilinear_terms, density_terms,
     )
 
@@ -127,7 +127,7 @@ function test_bose_hubbard()
     # ═══════════════════════════════════════════════════════════════════════════
 
     symmetry_group = build_translation_group(lattice)
-    ed_data = build_ed_data(model; filling_fraction=filling_frac, symmetry_group=symmetry_group)
+    ed_data = build_ed_data(second_quantized_model; filling_fraction=filling_frac, symmetry_group=symmetry_group)
 
     println("\n" * "="^70)
     println("  Bosonic FCI — Haldane honeycomb $(SAMPLE_SIZE[1])×$(SAMPLE_SIZE[2])")

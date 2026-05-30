@@ -92,7 +92,7 @@ function test_Heisenberg_1D()
         push!(density_terms, (i, i, ComplexF64(-J / 2)))
     end
 
-    model = RealSpace_ExactDiagonalization.ShortRange_Real_Space_Second_Quantized_Model(
+    second_quantized_model = RealSpace_ExactDiagonalization.Real_Space_Second_Quantized_Model(
         Dict("J" => J, "N_site" => N_SITE),
         lattice,
         tb_model,
@@ -114,7 +114,7 @@ function test_Heisenberg_1D()
     # 4. Build ED data and run symmetry-resolved scan
     # ═══════════════════════════════════════════════════════════════════════════
 
-    ed_data = build_ed_data(model; filling_fraction=N_E // n_site, symmetry_group=symmetry_group)
+    ed_data = build_ed_data(second_quantized_model; filling_fraction=N_E // n_site, symmetry_group=symmetry_group)
 
     println("\n" * "="^70)
     println("  Heisenberg Chain ED — N=$N_SITE, S^z=0 sector")

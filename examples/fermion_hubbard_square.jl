@@ -110,7 +110,7 @@ function test_fermi_hubbard()
 
     tb_model = TightBinding.initialize_real_space_tightbinding_model(lattice; model_name="Hubbard")
 
-    model = RealSpace_ExactDiagonalization.ShortRange_Real_Space_Second_Quantized_Model(
+    second_quantized_model = RealSpace_ExactDiagonalization.Real_Space_Second_Quantized_Model(
         Dict("t" => t, "U" => U),
         lattice,
         tb_model,
@@ -147,7 +147,7 @@ function test_fermi_hubbard()
     symmetry_group = Finite_Symmetry_Group("translations", ops; identity_idx=1)
     @info "Translation group: |G| = $(length(symmetry_group.operations))"
 
-    ed_data = build_ed_data(model; filling_fraction=filling_frac, symmetry_group=symmetry_group)
+    ed_data = build_ed_data(second_quantized_model; filling_fraction=filling_frac, symmetry_group=symmetry_group)
 
     println("\n" * "="^70)
     println("  Fermi-Hubbard — square lattice $(SAMPLE_SIZE[1])×$(SAMPLE_SIZE[2])")
