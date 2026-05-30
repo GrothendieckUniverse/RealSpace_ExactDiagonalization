@@ -177,7 +177,7 @@ where $\mathsf{coeff} = \alpha_{g_{\mathbf{m}}}\,\chi(g_{\mathbf{m}})^*$ and $g_
 
 The hopping sign for fermions depends only on occupied sites strictly between $i$ and $j$:
 
-$$c_j^\dagger c_i\,|\mathbf{s}\rangle = (-1)^{\sum_{k=\min(i,j)+1}^{\max(i,j)-1} n_k}\;|\mathbf{s}; i\!\to\! j\rangle$$
+$$c_j^\dagger c_i\,|\mathbf{s}\rangle = (-1)^{\sum_{k=\min(i,j)+1}^{\max(i,j)-1} n_k}\;|\mathbf{s}; i \to j\rangle$$
 
 Computed in $O(1)$ via `count_ones(m & between_mask)`.
 
@@ -247,7 +247,7 @@ julia --project=. examples/spin_heisenberg_chain.jl
 
 ### 2. Bosonic Fractional Chern Insulator — `examples/boson_fci_haldane.jl`
 
-$$H = \sum_{\langle i,j\rangle} t_{ij}\,b^\dagger_i b_j + \sum_{\langle\!\langle i,j\rangle\!\rangle} t'_{ij}\,b^\dagger_i b_j + \sum_{\langle\!\langle\!\langle i,j\rangle\!\rangle\!\rangle} t''_{ij}\,b^\dagger_i b_j$$
+$$H = \sum_{\langle i,j\rangle} t_{ij}\,b^\dagger_i b_j + \sum_{\langle\langle i,j\rangle\rangle} t'_{ij}\,b^\dagger_i b_j + \sum_{\langle\langle\langle i,j\rangle\rangle\rangle} t''_{ij}\,b^\dagger_i b_j$$
 
 Haldane honeycomb lattice, 2×3 unit cells (12 sites), 3 hard-core bosons at $\nu=1/2$ per band. Complex next-nearest-neighbour hoppings $t' = -0.60\,e^{\pm i\phi}$ ($\phi=0.4\pi$) break time-reversal symmetry. Parameters from D.N. Sheng et al., PRL **107**, 146803 (2011).
 
@@ -288,8 +288,8 @@ Timing **one symmetry sector** per model and system size (after JIT warmup):
 | Bosonic Haldane FCI | $[2,3], [2,4], [2,5], [3,4], [2,7]$ | $\mathbb{Z}^{L_1}\times\mathbb{Z}^{L_2}$ | 28 |
 | Spinful Fermi-Hubbard | $[2,3], [2,4], [2,5], [3,4], [2,7]$ | $\mathbb{Z}^{L_1}\times\mathbb{Z}^{L_2}$ | 28 |
 
-- $N=28$ Heisenberg: full Hilbert space $2^{28} = 2.68\times10^8$, reduced to $\sim\!9.6\times10^6$ per sector.
-- $[2,7]$ Hubbard: $\binom{28}{14} = 4.01\times10^7$, reduced to $\sim\!2.9\times10^6$ per sector.
+- $N=28$ Heisenberg: full Hilbert space $2^{28} = 2.68\times10^8$, reduced to $\sim9.6\times10^6$ per sector.
+- $[2,7]$ Hubbard: $\binom{28}{14} = 4.01\times10^7$, reduced to $\sim2.9\times10^6$ per sector.
 
 Generated figures (in `benchmark/figures/`): system-size plots, log-log scaling plots, and a combined summary.
 
