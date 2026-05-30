@@ -17,7 +17,7 @@ include("second_quantized_model.jl")
 include("symmetry_resolved_ed.jl")
 
 export Bosonic, Fermionic, Statistics,
-    ShortRange_Real_Space_Second_Quantized_Model,
+    Real_Space_Second_Quantized_Model,
     Symmetry_Operation, Finite_Symmetry_Group, OneDim_Irrep,
     Symmetry_Orbit_Catalog, Symmetry_Sector_Basis, Symmetry_Resolved_ED_Data,
     CanonicalMap, MatrixFreeHamiltonian,

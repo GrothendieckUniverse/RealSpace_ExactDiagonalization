@@ -206,13 +206,13 @@ struct Symmetry_Orbit_Catalog
 end
 
 function build_symmetry_orbit_catalog(;
-    model::Second_Quantized_Model,
+    second_quantized_model::Second_Quantized_Model,
     n_filled::Int,
     symmetry_group::Finite_Symmetry_Group,
     statistics::Statistics,
 )::Symmetry_Orbit_Catalog
     n_site = symmetry_group.n_site
-    @assert n_site == model.lattice.n_site
+    @assert n_site == second_quantized_model.lattice.n_site
 
     n_total = binomial(n_site, n_filled)
     n_orbits_est = cld(n_total, group_order(symmetry_group))
@@ -735,7 +735,7 @@ Struct `Symmetry_Resolved_ED_Data` to Store All Data for Symmetry-resolved ED
     - `ed_scan_res::Dict{Int, Tuple{Vector{Float64},Matrix{ComplexF64}}}`: a hashmap `Dict<irrep_idx, (eigvals, eigvecs)>` to store the ED results for each symmetry sector, where `irrep_idx` is the index of the irrep in `irrep_list`, and `(eigvals, eigvecs)` is the tuple of eigenvalues and eigenvectors obtained from the ED scan for that sector
 """
 mutable struct Symmetry_Resolved_ED_Data <: ED_Data
-    second_quantized_model::ShortRange_Real_Space_Second_Quantized_Model
+    second_quantized_model::Real_Space_Second_Quantized_Model
     n_filled::Int
     filling_fraction::Rational{Int}
     symmetry_group::Finite_Symmetry_Group
@@ -1114,27 +1114,26 @@ end
 # 20. Convenience constructors
 # ═══════════════════════════════════════════════════════════════════════════
 "constructor for `Symmetry_Resolved_ED_Data`"
-function build_ed_data(model::ShortRange_Real_Space_Second_Quantized_Model;
+function build_ed_data(second_quantized_model::Real_Space_Second_Quantized_Model;
     filling_fraction::Rational{Int}=1 // 2,
     symmetry_group::Finite_Symmetry_Group
 )::Symmetry_Resolved_ED_Data
-    n_site = model.lattice.n_site
+    n_site = second_quantized_model.lattice.n_site
     n_filled = Int(filling_fraction * n_site)
     @assert denominator(filling_fraction) * n_filled == numerator(filling_fraction) * n_site
 
-    irrep_list = build_irrep_list(symmetry_group, model.lattice)
-    catalog = build_symmetry_orbit_catalog(; model=model, n_filled=n_filled,
-        symmetry_group=symmetry_group, statistics=model.statistics)
+    irrep_list = build_irrep_list(symmetry_group, second_quantized_model.lattice)
+    catalog = build_symmetry_orbit_catalog(; second_quantized_model=second_quantized_model, n_filled=n_filled, symmetry_group=symmetry_group, statistics=second_quantized_model.statistics)
     sector_dims = zeros(Int, length(irrep_list))
     ed_scan_res = Dict{Int,Tuple{Vector{Float64},Matrix{ComplexF64}}}()
 
-    return Symmetry_Resolved_ED_Data(model, n_filled, filling_fraction, symmetry_group,
+    return Symmetry_Resolved_ED_Data(second_quantized_model, n_filled, filling_fraction, symmetry_group,
         irrep_list, catalog, sector_dims, ed_scan_res)
 end
 
-function full_ed(model::ShortRange_Real_Space_Second_Quantized_Model, n_filled::Int; nev::Int=5)
-    symmetry = build_identity_group(model.lattice.n_site)
-    ed_data = build_ed_data(model; filling_fraction=n_filled // model.lattice.n_site, symmetry_group=symmetry)
+function full_ed(second_quantized_model::Real_Space_Second_Quantized_Model, n_filled::Int; nev::Int=5)
+    symmetry = build_identity_group(second_quantized_model.lattice.n_site)
+    ed_data = build_ed_data(second_quantized_model; filling_fraction=n_filled // second_quantized_model.lattice.n_site, symmetry_group=symmetry)
     ed_scan!(ed_data; nev=nev)
     return ed_data.ed_scan_res[1]
 end
