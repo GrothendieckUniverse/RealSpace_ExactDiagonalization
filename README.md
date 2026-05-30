@@ -37,8 +37,7 @@ A high-performance, statistics-agnostic Julia implementation following the desig
 
 ```
                            ┌──────────────────────────────────────┐
-                           │  ShortRange_Real_Space_              │
-                           │  Second_Quantized_Model              │
+                           │  Real_Space_Second_Quantized_Model   |
                            │  · lattice geometry                  │
                            │  · bilinear terms  (a†_i a_j)        │
                            │  · density terms   (n_i n_j)         │
@@ -47,14 +46,14 @@ A high-performance, statistics-agnostic Julia implementation following the desig
                                           │
               ┌───────────────────────────┼───────────────────────────┐
               │                           │                           │
-    ┌─────────▼──────────┐    ┌───────────▼───────────┐    ┌──────────▼──────────┐
-    │  Symmetry_Operation │    │  Gosper's Hack         │    │  Bitwise_Operations  │
-    │  · perm:  π_g(i)    │    │  enumerate fixed-      │    │  · occupy/empty      │
-    │  · phase: η_g(i)    │    │  weight bitmasks       │    │  · count_ones (popcnt)│
-    │  · label g ∈ G      │    │  in lexicographic      │    │  · trailing_zeros     │
-    └─────────┬──────────┘    │  order, O(1)/iter,     │    └─────────────────────┘
-              │               │  zero allocation       │
-              │               └───────────┬───────────┘
+    ┌─────────▼───────────┐    ┌───────────▼──────────┐    ┌──────────▼────────────┐
+    │  Symmetry_Operation │    │  Gosper's Hack       │    │  Bitwise_Operations   │
+    │  · perm:  π_g(i)    │    │  enumerate fixed-    │    │  · occupy/empty       │
+    │  · phase: η_g(i)    │    │  weight bitmasks     │    │  · count_ones (popcnt)│
+    │  · label g ∈ G      │    │  in lexicographic    │    │  · trailing_zeros     │
+    └─────────┬───────────┘    │  order, O(1)/iter,   │    └───────────────────────┘
+              │                │  zero allocation     │
+              │                └───────────┬──────────┘
               │                           │
     ┌─────────▼──────────┐    ┌───────────▼───────────┐
     │  Finite_Symmetry_   │    │  Symmetry_Orbit_      │
@@ -191,15 +190,15 @@ using TightBinding
 
 # ── Build the Haldane honeycomb model (2×3 unit cells, 3 hard-core bosons) ──
 tb_model = build_bose_hubbard_real_space_tb_model(; sample_size=[2, 3], params=params)
-model = initialize_second_quantized_model_for_Haldane_honeycomb_lattice(
+second_quantized_model = initialize_second_quantized_model_for_Haldane_honeycomb_lattice(
     tb_model; params, statistics=Bosonic()
 )
 
 # ── Translation symmetry: |G| = 6 ──
-symmetry = build_translation_group(model.lattice)
+symmetry = build_translation_group(second_quantized_model.lattice)
 
 # ── Build ED data at ν = 1/2 per band ──
-ed_data = build_ed_data(model; filling_fraction=3//12, symmetry=symmetry)
+ed_data = build_ed_data(second_quantized_model; filling_fraction=3//12, symmetry=symmetry)
 
 # ── Scan all momentum sectors (matrix-free, 8 threads) ──
 ed_scan!(ed_data; nev=5, mode=:matrixfree)
