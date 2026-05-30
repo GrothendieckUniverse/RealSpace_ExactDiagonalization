@@ -87,13 +87,13 @@ function build_heisenberg_ed(N::Int)
         push!(density_terms, (i, i, ComplexF64(-J / 2)))
     end
 
-    model = RealSpace_ExactDiagonalization.ShortRange_Real_Space_Second_Quantized_Model(
+    second_quantized_model = RealSpace_ExactDiagonalization.Real_Space_Second_Quantized_Model(
         Dict("J" => J), lattice, tb_model, Bosonic(), bilinear_terms, density_terms,
     )
     n_site = lattice.n_site
     n_filled = N ÷ 2
     symmetry_group = build_translation_group(lattice)
-    return build_ed_data(model; filling_fraction=n_filled // n_site, symmetry_group=symmetry_group)
+    return build_ed_data(second_quantized_model; filling_fraction=n_filled // n_site, symmetry_group=symmetry_group)
 end
 
 "Build Haldane honeycomb FCI ED data"
@@ -129,12 +129,12 @@ function build_haldane_ed(sample_size::Vector{Int})
     end
     density_terms = Vector{Tuple{Int,Int,ComplexF64}}()  # V1=V2=0 for benchmark
 
-    model = RealSpace_ExactDiagonalization.ShortRange_Real_Space_Second_Quantized_Model(
+    second_quantized_model = RealSpace_ExactDiagonalization.Real_Space_Second_Quantized_Model(
         Dict("t" => t, "t′" => t′, "t′′" => t′′, "ϕ" => ϕ), lattice, tb_model, Bosonic(), bilinear_terms, density_terms,
     )
     n_filled = prod(sample_size) ÷ 2
     symmetry_group = build_translation_group(lattice)
-    return build_ed_data(model; filling_fraction=n_filled // lattice.n_site, symmetry_group=symmetry_group)
+    return build_ed_data(second_quantized_model; filling_fraction=n_filled // lattice.n_site, symmetry_group=symmetry_group)
 end
 
 "Build spinful Fermi-Hubbard ED data on square lattice"
@@ -182,7 +182,7 @@ function build_hubbard_ed(sample_size::Vector{Int})
     end
 
     tb_model = TightBinding.initialize_real_space_tightbinding_model(lattice; model_name="Hubbard")
-    model = RealSpace_ExactDiagonalization.ShortRange_Real_Space_Second_Quantized_Model(
+    second_quantized_model = RealSpace_ExactDiagonalization.Real_Space_Second_Quantized_Model(
         Dict("t" => 1.0, "U" => 8.0), lattice, tb_model, Fermionic(), bilinear_terms, density_terms,
     )
     n_spatial = prod(sample_size)
@@ -201,7 +201,7 @@ function build_hubbard_ed(sample_size::Vector{Int})
         push!(ops, Symmetry_Operation((δx, δy), perm))
     end
     symmetry_group = Finite_Symmetry_Group("translations", ops; identity_idx=1)
-    return build_ed_data(model; filling_fraction=n_filled // n_site, symmetry_group=symmetry_group)
+    return build_ed_data(second_quantized_model; filling_fraction=n_filled // n_site, symmetry_group=symmetry_group)
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
