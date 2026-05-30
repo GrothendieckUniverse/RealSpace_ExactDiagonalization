@@ -1,5 +1,5 @@
 # Package `RealSpace_ExactDiagonalization.jl`
---- Symmetry-resolved exact diagonalization on _arbitrary_ real-space graphs, **supporting spin, bosonic and fermionic systems with arbitrary spins or other internal degrees of freedoms**.
+--- Symmetry-resolved exact diagonalization on _arbitrary_ real-space graphs, **supporting both spin/bosonic and fermionic systems with arbitrary spins or other internal degrees of freedom**.
 
 A high-performance, statistics-agnostic Julia implementation similar to the design philosophy of [XDiag](https://github.com/awietek/xdiag). The package block-diagonalizes interacting quantum lattice Hamiltonians via bitmask encoding, orbit-stabilizer decomposition, and irrep-induced projection, with or without forming the full many-body matrix.
 
