@@ -27,7 +27,7 @@ A high-performance, statistics-agnostic Julia implementation similar to the desi
 
 3. **Irrep-induced projection** — 1D irreducible representations of finite abelian groups supply projectors $P_\chi$ that block-diagonalize the Hamiltonian without ever constructing the full matrix. An orbit contributes to irrep $\chi$ iff its stabilizer phases satisfy a compatibility condition.
 
-4. **Two computational modes** — a *matrix mode* that precomputes sparse CSC matrices for fast Arpack diagonalization (memory-intensive but fast), and a *matrix-free mode* that computes $H|\psi\rangle$ on-the-fly via a multithreaded `CanonicalMap` cache (near-zero memory overhead, ~1.5–3× slower per sector).
+4. **Two computational modes, one CanonicalMap** — a *matrix mode* that precomputes sparse CSC matrices for fast Arpack diagonalization (memory-intensive but fast), and a *matrix-free mode* that computes $H|\psi\rangle$ on-the-fly via multithreaded Lanczos (near-zero memory overhead, ~1.5–3× slower per sector). Both modes share the same `CanonicalMap` cache for O(1) canonical-representative lookups, providing 3–10× speedup in matrix construction over raw O(|G|) canonicalization.
 
 5. **Unified boson/fermion treatment** — the entire pipeline is statistics-agnostic. Fermionic signs (permutation parity in symmetry actions and Jordan-Wigner strings in hopping) are injected via compile-time multiple dispatch on `Bosonic()` / `Fermionic()` singleton types, with zero runtime branching overhead.
 
@@ -101,7 +101,7 @@ A high-performance, statistics-agnostic Julia implementation similar to the desi
 3. **Enumerate configurations** — Gosper's hack iterates all bitmasks at fixed particle number in lexicographic order.
 4. **Orbit-stabilizer decomposition** — partition bitmasks into $G$-orbits; record canonical representatives and stabilizer phases.
 5. **Filter by irrep** — for a given character $\chi$, keep only orbits satisfying $\chi(h) = \alpha_h([\mathbf{s}])$ for all $h\in\mathrm{Stab}$.
-6. **Build Hamiltonian block** — construct the sparse CSC matrix (matrix mode) or precompute the `CanonicalMap` (matrix-free mode).
+6. **Build Hamiltonian block** — construct the sparse CSC matrix (matrix mode, accelerated by `CanonicalMap` cache) or pre-populate the `CanonicalMap` and run matrix-free Lanczos.
 7. **Diagonalize** — Arpack (CSC) or KrylovKit (matrix-free) to obtain eigenvalues and eigenvectors.
 8. **Post-process** — analyse spectra, compute correlators, checkpoint and resume.
 
@@ -109,10 +109,12 @@ A high-performance, statistics-agnostic Julia implementation similar to the desi
 
 ```
 BLAS threads:  1 (default) — don't compete with Julia workers
-Build H:       Distributed.pmap across workers (matrix mode)
+CanonicalMap:  uniform O(1) cache across matrix / distributed / matrix-free modes
+Build H:       Distributed.pmap across workers (matrix mode), each with own CanonicalMap
 Diag:          BLAS.set_num_threads(nprocs()) temporarily for Arpack/KrylovKit
                … then restore BLAS = 1
 Matvec H|ψ⟩:   Threads.@threads :static with per-thread accumulation buffers
+               (CanonicalMap pre-populated single-threaded for thread safety)
 GC:            explicit GC.gc(true) after each sector
 Checkpoint:    JLD2 serialization of Symmetry_Resolved_ED_Data
 ```
@@ -198,7 +200,7 @@ second_quantized_model = initialize_second_quantized_model_for_Haldane_honeycomb
 symmetry = build_translation_group(second_quantized_model.lattice)
 
 # ── Build ED data at ν = 1/2 per band ──
-ed_data = build_ed_data(second_quantized_model; filling_fraction=3//12, symmetry=symmetry)
+ed_data = build_ed_data(second_quantized_model; filling_fraction=3//12, symmetry_group=symmetry)
 
 # ── Scan all momentum sectors (matrix-free, 8 threads) ──
 ed_scan!(ed_data; nev=5, mode=:matrixfree)
@@ -275,7 +277,7 @@ julia --project=. examples/fermion_hubbard_square.jl
 ### Comprehensive Multi-Model Benchmark
 
 ```bash
-julia --project=. -p 96 -t 96 benchmark/benchmark.jl    # run all models
+julia --project=. -p 4 -t 8 benchmark/benchmark.jl     # run all models (workstation)
 julia --project=. benchmark/plot_benchmark.jl            # plot from CSV
 ```
 
@@ -283,12 +285,14 @@ Timing **one symmetry sector** per model and system size (after JIT warmup):
 
 | Model | System Sizes | Symmetry Group | Max Vertices |
 |-------|-------------|----------------|-------------|
-| Spin-½ Heisenberg chain | $N = 20, 22, 24, 26, 28$ | $\mathbb Z^N$ | 28 |
-| Bosonic Haldane FCI | $[2,3], [2,4], [2,5], [3,4], [2,7]$ | $\mathbb{Z}^{L_1}\times\mathbb{Z}^{L_2}$ | 28 |
-| Spinful Fermi-Hubbard | $[2,3], [2,4], [2,5], [3,4], [2,7]$ | $\mathbb{Z}^{L_1}\times\mathbb{Z}^{L_2}$ | 28 |
+| Spin-½ Heisenberg chain | $N = 18, 20, 22, 24, 26$ | $\mathbb Z^N$ | 26 |
+| Bosonic Haldane FCI | $[2,3], [2,4], [2,5], [3,4]$ | $\mathbb{Z}^{L_1}\times\mathbb{Z}^{L_2}$ | 24 |
+| Spinful Fermi-Hubbard | $[2,3], [2,4], [2,5], [3,4]$ | $\mathbb{Z}^{L_1}\times\mathbb{Z}^{L_2}$ | 24 |
 
-- $N=28$ Heisenberg: full Hilbert space $2^{28} = 2.68\times10^8$, reduced to $\sim9.6\times10^6$ per sector.
-- $[2,7]$ Hubbard: $\binom{28}{14} = 4.01\times10^7$, reduced to $\sim2.9\times10^6$ per sector.
+- $N=26$ Heisenberg: full Hilbert space $\binom{26}{13} = 1.04\times10^7$, reduced to $\sim4.0\times10^5$ per sector.
+- $[3,4]$ Hubbard: $\binom{24}{12} = 2.70\times10^6$, reduced to $\sim2.3\times10^5$ per sector.
+
+The `CanonicalMap` cache provides an additional 3–10× speedup in matrix construction by caching repeated canonical-representative lookups.
 
 Generated figures (in `benchmark/figures/`): system-size plots, log-log scaling plots, and a combined summary.
 

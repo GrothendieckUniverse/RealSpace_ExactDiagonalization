@@ -369,17 +369,24 @@ function build_symmetry_sector_basis(catalog::Symmetry_Orbit_Catalog, irrep::One
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 9. CanonicalMap — O(1) canonical-representative lookup for matrix-free mode
+# 9. CanonicalMap — O(1) canonical-representative lookup (all modes)
 # ═══════════════════════════════════════════════════════════════════════════
 
 """
     CanonicalMap
 
-Precomputed lookup: scattered_mask → (repr_mask, g_idx, α_g).
+Lazily-populated cache: scattered_mask → (repr_mask, g_idx, α_g).
 
-Populated once before Lanczos iterations, then shared read-only across threads.
-This is the key optimization that makes the matrix-free mode only ~1.5× slower
-than the explicit sparse-matrix mode (following XDiag's design).
+Used uniformly across ALL ED modes (matrix, distributed-matrix, and matrix-free)
+to avoid repeated O(|G|) canonicalization of the same scattered masks.
+
+- **Matrix mode**: rows are built single-threaded; the cache warms naturally
+  via `get!`, providing 3–10× speedup over uncached canonicalization.
+- **Distributed matrix mode**: each worker maintains its own cache copy;
+  columns are processed single-threaded per worker — no synchronisation needed.
+- **Matrix-free mode**: MUST be pre-populated via `populate_canonical_map!`
+  before the multi-threaded Lanczos loop; after population all `get_canonical`
+  calls are read-only Dict lookups, which are thread-safe without locks.
 """
 struct CanonicalMap
     symmetry_group::Finite_Symmetry_Group
@@ -397,9 +404,16 @@ end
 """
     populate_canonical_map!(cmap, basis, bilinear_terms)
 
-Pre-scan all representative masks and all valid hopping moves, caching the
-canonical representative of every reachable scattered mask.  After this call,
-all `get_canonical` lookups during Lanczos iterations are O(1) hash hits.
+Single-threaded cache warmup: iterates every representative mask × every valid
+hopping move, calling `get_canonical` to populate the Dict.
+
+**Required before any multi-threaded use** (e.g., `apply_hamiltonian!` with
+`Threads.@threads`) because `get!` on a shared Dict is NOT thread-safe during
+concurrent writes.  After this call, all subsequent `get_canonical` lookups
+are pure Dict reads, which are safe across threads.
+
+For single-threaded matrix construction, this call is optional (the cache
+warms naturally during the column loop) but harmless.
 """
 function populate_canonical_map!(cmap::CanonicalMap, basis::Symmetry_Sector_Basis,
     bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}})
@@ -416,33 +430,27 @@ function populate_canonical_map!(cmap::CanonicalMap, basis::Symmetry_Sector_Basi
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 10. project_to_sector — irrep projection (uses CanonicalMap if provided)
+# 10. project_to_sector — unified irrep projection via CanonicalMap
 # ═══════════════════════════════════════════════════════════════════════════
 
-"Slow path: O(|G|) canonicalization (used during matrix construction or when no CanonicalMap)"
-@inline function _project_slow(m::Mask, basis::Symmetry_Sector_Basis, stats::Statistics)
-    repr, g_idx, α = get_canonical_representative(m, basis.symmetry_group, stats)
-    idx = _basis_index(basis, repr)
-    idx == 0 && return nothing
-    return (idx, α * conj(basis.irrep.values[g_idx]))
-end
+"""
+    project_to_sector(m, basis, cmap) -> Union{Nothing, Tuple{Int, ComplexF64}}
 
-"Fast path: O(1) canonicalization via CanonicalMap"
-@inline function _project_fast(m::Mask, basis::Symmetry_Sector_Basis, cmap::CanonicalMap)
+Project a scattered Fock mask `m` onto the symmetry-sector basis.
+
+1. Obtain canonical representative `(repr, g_idx, α)` via `CanonicalMap`
+   (O(1) cached, O(|G|) on first encounter).
+2. Look up the representative in the basis Dict.
+3. Return `(row_index, α · χ(g_idx)ˣ)` or `nothing` if the orbit does not
+   belong to this irrep sector.
+
+Used uniformly by matrix, distributed-matrix, and matrix-free modes.
+"""
+@inline function project_to_sector(m::Mask, basis::Symmetry_Sector_Basis, cmap::CanonicalMap)
     repr, g_idx, α = get_canonical(cmap, m)
     idx = _basis_index(basis, repr)
     idx == 0 && return nothing
     return (idx, α * conj(basis.irrep.values[g_idx]))
-end
-
-"Generic dispatch"
-@inline function project_to_sector(m::Mask, basis::Symmetry_Sector_Basis,
-    stats_or_cmap::Union{Statistics,CanonicalMap})
-    if stats_or_cmap isa CanonicalMap
-        return _project_fast(m, basis, stats_or_cmap)
-    else
-        return _project_slow(m, basis, stats_or_cmap)
-    end
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -543,7 +551,7 @@ function apply_hamiltonian!(y::Vector{ComplexF64}, x::Vector{ComplexF64},
                 new_mask = empty_site_for_mask(repr_mask, i_from)
                 new_mask = occupy_site_for_mask(new_mask, i_to)
 
-                proj = _project_fast(new_mask, basis, cmap)
+                proj = project_to_sector(new_mask, basis, cmap)
                 proj === nothing && continue
 
                 row, coeff = proj
@@ -594,7 +602,7 @@ function build_ed_Hamiltonian_symmetry_block(
     basis::Symmetry_Sector_Basis,
     bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
     density_terms::Vector{<:Tuple{Int,Int,<:Number}},
-    statistics::Statistics,
+    cmap::CanonicalMap,
 )::SparseMatrixCSC{ComplexF64,Int}
     sector_dim = length(basis.representative_mask_list)
     print("\tBuilding H block (matrix mode) @ irrep $(basis.irrep.label) (dim=$sector_dim) ... ")
@@ -627,11 +635,11 @@ function build_ed_Hamiltonian_symmetry_block(
                 if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
                     new_mask = empty_site_for_mask(repr_mask, i_from)
                     new_mask = occupy_site_for_mask(new_mask, i_to)
-                    proj = _project_slow(new_mask, basis, statistics)
+                    proj = project_to_sector(new_mask, basis, cmap)
                     proj === nothing && continue
                     row, coeff = proj
                     stab_row = basis.stabilizer_order_list[row]
-                    hop_phase = hopping_phase_for_stats(statistics, repr_mask, i_from, i_to)
+                    hop_phase = hopping_phase_for_stats(cmap.statistics, repr_mask, i_from, i_to)
                     H_elem = t * hop_phase * coeff * sqrt(stab_row / stab_col)
                     push!(Is, row)
                     push!(Js, col)
@@ -666,14 +674,13 @@ function diagonalize_block_arpack(H::SparseMatrixCSC{ComplexF64,Int}; nev::Int=5
     n = size(H, 1)
     n == 0 && return Float64[], Matrix{ComplexF64}(undef, 0, 0)
     # Temporarily set BLAS threads = nprocs() for diagonalization (HPC: one per worker)
-    blas_th = max(1, nprocs())
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(blas_th)
+    blas_threads = max(1, nprocs())
+    BLAS.set_num_threads(blas_threads)
     try
-        if n <= 300
+        if n <= 500
             return diagonalize_block_dense(H; nev=nev)
         else
-            vals, vecs, _ = eigs(H; nev=nev, which=:SR)
+            vals, vecs, _ = Arpack.eigs(H; nev=nev, which=:SR)
             return real.(vals), Matrix(vecs)
         end
     finally
@@ -685,11 +692,10 @@ end
 function diagonalize_block_matrixfree(H_op!, n::Int; nev::Int=5)
     n == 0 && return Float64[], Matrix{ComplexF64}(undef, 0, 0)
     # Temporarily set BLAS threads = nprocs() for diagonalization
-    blas_th = max(1, nprocs())
-    old_blas = BLAS.get_num_threads()
-    BLAS.set_num_threads(blas_th)
+    blas_threads = max(1, nprocs())
+    BLAS.set_num_threads(blas_threads)
     try
-        if n <= 300
+        if n <= 500
             # Build dense matrix for small sectors
             H_dense = Matrix{ComplexF64}(undef, n, n)
             x = zeros(ComplexF64, n)
@@ -718,7 +724,7 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 # 14. High-level ED data structure
 # ═══════════════════════════════════════════════════════════════════════════
-abstract type ED_Data end 
+abstract type ED_Data end
 
 
 """
@@ -758,13 +764,16 @@ function ed_scan_at_irrep_matrix!(irrep_label, ed_data::Symmetry_Resolved_ED_Dat
     basis = build_symmetry_sector_basis(ed_data.orbit_catalog, irrep)
     ed_data.sector_dims[irrep_idx] = length(basis.representative_mask_list)
 
+    # ── Create CanonicalMap (shared across all matrix-construction paths) ──
+    cmap = CanonicalMap(ed_data.symmetry_group, statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
+
     # Use distributed construction when workers are available (HPC)
     if nprocs() > 1 && ed_data.sector_dims[irrep_idx] > 500
         H = build_ed_Hamiltonian_symmetry_block_distributed(basis, ed_data.second_quantized_model.bilinear_terms,
-            ed_data.second_quantized_model.density_density_terms, statistics)
+            ed_data.second_quantized_model.density_density_terms, cmap)
     else
         H = build_ed_Hamiltonian_symmetry_block(basis, ed_data.second_quantized_model.bilinear_terms,
-            ed_data.second_quantized_model.density_density_terms, statistics)
+            ed_data.second_quantized_model.density_density_terms, cmap)
     end
     vals, vecs = diagonalize_block_arpack(H; nev=nev)
     ed_data.ed_scan_res[irrep_idx] = (vals, vecs)
@@ -836,14 +845,14 @@ function build_ed_Hamiltonian_symmetry_block_distributed(
     basis::Symmetry_Sector_Basis,
     bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
     density_terms::Vector{<:Tuple{Int,Int,<:Number}},
-    statistics::Statistics,
+    cmap::CanonicalMap,
 )::SparseMatrixCSC{ComplexF64,Int}
     sector_dim = length(basis.representative_mask_list)
     if sector_dim == 0
         return spzeros(ComplexF64, Int, 0, 0)
     end
     if nprocs() == 1
-        return build_ed_Hamiltonian_symmetry_block(basis, bilinear_terms, density_terms, statistics)
+        return build_ed_Hamiltonian_symmetry_block(basis, bilinear_terms, density_terms, cmap)
     end
     ensure_distributed_workers_loaded!()
 
@@ -879,11 +888,11 @@ function build_ed_Hamiltonian_symmetry_block_distributed(
                     if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
                         new_mask = empty_site_for_mask(repr_mask, i_from)
                         new_mask = occupy_site_for_mask(new_mask, i_to)
-                        proj = _project_slow(new_mask, basis, statistics)
+                        proj = project_to_sector(new_mask, basis, cmap)
                         proj === nothing && continue
                         row, coeff = proj
                         stab_row = basis.stabilizer_order_list[row]
-                        hop_phase = hopping_phase_for_stats(statistics, repr_mask, i_from, i_to)
+                        hop_phase = hopping_phase_for_stats(cmap.statistics, repr_mask, i_from, i_to)
                         H_elem = t * hop_phase * coeff * sqrt(stab_row / stab_col)
                         push!(Is, row)
                         push!(Js, col)
@@ -958,7 +967,7 @@ function apply_hamiltonian_distributed!(y::Vector{ComplexF64}, x::Vector{Complex
                 if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
                     new_mask = empty_site_for_mask(repr_mask, i_from)
                     new_mask = occupy_site_for_mask(new_mask, i_to)
-                    proj = _project_fast(new_mask, basis, cmap)
+                    proj = project_to_sector(new_mask, basis, cmap)
                     proj === nothing && continue
                     row, coeff = proj
                     stab_row = basis.stabilizer_order_list[row]
@@ -1015,17 +1024,24 @@ function load_checkpoint(path::String)::Symmetry_Resolved_ED_Data
 end
 
 """
-    ed_scan!(ed_data; nev=5, mode=:matrix, checkpoint_path=nothing)
+Scan ALL Sectors to Update `ed_data.ed_scan_res`
+---
+with support of two running modes `:matrix` and `:matrixfree` (on-the-fly, a little bit slower in general), and checkpoint serialize and recovery if `checkpoint_path` is provided.
 
-Extended with checkpoint support.  If `checkpoint_path` is provided, the full
-`ed_data` is serialized to disk after each completed symmetry sector, enabling
-resume after HPC preemption.
-
-To resume: load the checkpoint with `load_checkpoint(path)`, then call
-`ed_scan!` again — previously-computed sectors are automatically skipped.
+- Args:
+    - `ed_data::Symmetry_Resolved_ED_Data`
+- Named Args:
+    - `nev::Int`: number of eigenvalues to compute for each sector
+    - `mode::Symbol`: either `:matrix` or `:matrixfree`. 
+    - `checkpoint_path::Union{String,Nothing}`:
+    - `use_distributed::Bool=false`
 """
-function ed_scan!(ed_data::Symmetry_Resolved_ED_Data; nev::Int=5, mode::Symbol=:matrix,
-    checkpoint_path::Union{String,Nothing}=nothing, use_distributed::Bool=false)
+function ed_scan!(ed_data::Symmetry_Resolved_ED_Data;
+    nev::Int=5,
+    mode::Symbol=:matrix,
+    checkpoint_path::Union{String,Nothing}=nothing,
+    use_distributed::Bool=false
+)
     n_total = length(ed_data.irrep_list)
     n_done = length(ed_data.ed_scan_res)
     n_done > 0 && println("[ED scan] $(n_done)/$(n_total) sectors already computed; resuming.")
@@ -1189,6 +1205,79 @@ function plot_spectrum(ed_data::Symmetry_Resolved_ED_Data; shift_to_zero::Bool=t
         val = spec[k, e]
         !isnan(val) && scatter!(ax, k - 1, val; color=:royalblue1, markersize=14, alpha=0.75,
             strokecolor=:blue, strokewidth=0.5)
+    end
+    return fig, ax
+end
+
+
+
+"""
+Plot the ED Spectrum Resolved by Symmetry Sectors (1D Irreps)
+---
+- Args:
+    - `ed_data::Symmetry_Resolved_Hard_Core_ED_Data`
+- Named Args:
+    - `shift_to_zero::Bool=true`: whether to shift the spectrum such that the minimum eigenvalue is zero
+    - `show_spec::Bool=true`: whether to print the numerical values of the ED spectrum
+    - `save_plot::Bool=true`: whether to save the plot as an SVG file in the `figures/ED/` directory
+    - `fig_path::Union{Nothing,String}=nothing`: optional file path for saving the plot, will only be used if `save_plot=true`
+"""
+function plot_ed_scan_res(
+    ed_data::Symmetry_Resolved_ED_Data;
+    shift_to_zero::Bool=true,
+    save_plot::Bool=false,
+    fig_path::Union{Nothing,String}=nothing,
+    show_spec::Bool=true,
+)
+    scanned_indices = sort(collect(keys(ed_data.ed_scan_res)))
+    nev = isempty(scanned_indices) ? 1 : length(ed_data.ed_scan_res[scanned_indices[1]][1])
+    spec = reduce(hcat, [
+        haskey(ed_data.ed_scan_res, irrep_idx) ?
+        ed_data.ed_scan_res[irrep_idx][1] : fill(NaN, nev)
+        for irrep_idx in eachindex(ed_data.irrep_list)
+    ])' # the eigvals of one symmetry sector/irrep is `spec[<irrep_idx>,:]`; unscanned sectors filled with NaN
+
+    show_spec && begin
+        @info "Raw ED spectrum (symmetry-resolved):"
+        show(stdout, "text/plain", spec)
+        println()
+    end
+
+    finite_vals = spec[.!isnan.(spec)]
+    if !isempty(finite_vals)
+        shift_to_zero && (spec .-= minimum(finite_vals))
+    end
+    show_spec && begin
+        @info "Shifted ED spectrum (symmetry-resolved):"
+        show(stdout, "text/plain", spec)
+        println()
+    end
+
+    sample_size = ed_data.second_quantized_model.lattice.sample_size
+    fig = Figure(size=(600, 400))
+    ax = Axis(fig[1, 1];
+        xlabel="symmetry sector index",
+        ylabel="E [unit]",
+        title="ED Spectrum of $(sample_size) Sample",
+        xticks=0:2:size(spec, 1),
+        xminorticks=IntervalsBetween(2),
+        xminorticksvisible=true,
+        yminorticksvisible=true,
+    )
+
+    for k in axes(spec, 1), e in axes(spec, 2)
+        val = spec[k, e]
+        if !isnan(val)
+            scatter!(ax, k - 1, val; color=:royalblue1, markersize=14, alpha=0.75,
+                strokecolor=:blue, strokewidth=0.5)
+        end
+    end
+
+    if save_plot && !isnothing(fig_path)
+        save(fig_path, fig)
+        @info "Saved plot to $fig_path"
+    else
+        error("No figure path specified. Please provide a valid path using the `fig_path` argument.")
     end
     return fig, ax
 end

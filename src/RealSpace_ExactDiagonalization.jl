@@ -30,7 +30,7 @@ export Bosonic, Fermionic, Statistics,
     populate_canonical_map!,
     ed_scan!, ed_scan_at_irrep_matrix!, ed_scan_at_irrep_matrixfree!,
     diagonalize_block_dense, diagonalize_block_arpack, diagonalize_block_matrixfree,
-    full_ed, print_spectrum, plot_spectrum,
+    full_ed, print_spectrum, plot_spectrum, plot_ed_scan_res,
     save_checkpoint, load_checkpoint
 
 

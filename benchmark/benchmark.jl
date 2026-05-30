@@ -3,9 +3,11 @@
 # Benchmark: Single-Sector Symmetry-Resolved ED Timings
 #
 # Three models benchmarked in both matrix-construct and matrix-free modes:
-#   1. Spin:    S=½ Heisenberg chain  (N_site = [20,22,24,26,28,30])
-#   2. Bosonic: Haldane honeycomb FCI  (sample_size = [[2,3],[2,4],[2,5],[3,4],[2,7]])
-#   3. Fermionic: Hubbard on square   (sample_size = [[2,3],[2,4],[2,5],[3,4],[2,7]])
+#   1. Spin:    S=½ Heisenberg chain  (N_site = [18,20,22,24,26])
+#   2. Bosonic: Haldane honeycomb FCI  (sample_size = [[2,3],[2,4],[2,5],[3,4]])
+#   3. Fermionic: Hubbard on square   (sample_size = [[2,3],[2,4],[2,5],[3,4]])
+#
+# CanonicalMap is used uniformly across all modes for O(1) canonical lookups.
 #
 # Each: JIT-warmup → time one sector (sector index 1) → CSV output
 #
@@ -16,7 +18,7 @@
 using Distributed
 
 # ---- ensure enough workers (fallback to single-process if none) ----
-const REQUIRED_PROCS = 8
+const REQUIRED_PROCS = 4
 if nprocs() < REQUIRED_PROCS + 1
     try
         addprocs(REQUIRED_PROCS + 1 - nprocs(); exeflags="--project=$(Base.active_project())")
@@ -271,7 +273,7 @@ function run_benchmarks()
     println("\n" * "="^70)
     println("  Model 1: Spin-½ Heisenberg Chain (translation symmetry)")
     println("="^70)
-    for N in [20, 22, 24, 26, 28]
+    for N in [18, 20, 22, 24, 26, 28]
         for mode in MODES
             ed = build_heisenberg_ed(N)
             t_elapsed, dim, e0 = time_single_sector!(ed, mode)
@@ -440,5 +442,9 @@ plot_model(rows, "Hubbard_Fermion", joinpath(FIG_DIR, "spinful_fermi_hubbard_2D.
 plot_scaling(rows, "Heisenberg", joinpath(FIG_DIR, "heisenberg_1D_scaling.svg"))
 plot_scaling(rows, "Haldane_Boson", joinpath(FIG_DIR, "bose_hubbard_2D_scaling.svg"))
 plot_scaling(rows, "Hubbard_Fermion", joinpath(FIG_DIR, "spinful_fermi_hubbard_2D_scaling.svg"))
+
+
+include("plot_benchmark.jl") # combine plot
+
 
 println("\nDone. All plots saved to $FIG_DIR")

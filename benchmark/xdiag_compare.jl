@@ -35,7 +35,7 @@ const N_SECTORS = 3
 const Sp = [0.0 1.0; 0.0 0.0]   # S^+
 const Sm = [0.0 0.0; 1.0 0.0]   # S^-
 
-function build_xdiag_opsum(model::RealSpace_ExactDiagonalization.ShortRange_Real_Space_Second_Quantized_Model)
+function build_xdiag_opsum(model::RealSpace_ExactDiagonalization.Real_Space_Second_Quantized_Model)
     ops = OpSum()
 
     # Hopping terms: directly use Matrix operator for each S_i^+ S_j^-
