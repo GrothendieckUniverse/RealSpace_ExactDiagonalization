@@ -41,13 +41,13 @@ function update_second_quantized_model_with_twisted_phases!(
     twisted_phases_over_2π::Vector{Float64},
 )::Real_Space_Second_Quantized_Model
     lattice = second_quantized_model.lattice
-    length(twisted_phases_over_2π) == lattice.dim ||
-        error("twisted_phases_over_2π must have length $(lattice.dim).")
+    length(twisted_phases_over_2π) == lattice.dim || error("twisted_phases_over_2π must have length $(lattice.dim).")
 
     second_quantized_model.bilinear_terms = TightBinding.generate_bilinear_terms(
         second_quantized_model.tb_model;
         twisted_phases_over_2π=twisted_phases_over_2π,
     )
-    second_quantized_model.params["twisted_phase_over_2π"] = twisted_phases_over_2π
+    second_quantized_model.lattice.twisted_phases_over_2π = twisted_phases_over_2π
+
     return second_quantized_model
 end

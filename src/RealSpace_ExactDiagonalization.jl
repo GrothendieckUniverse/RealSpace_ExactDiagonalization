@@ -17,6 +17,9 @@ include("second_quantized_model.jl")
 include("symmetry_resolved_ed.jl")
 
 include("../observables/spectrum_flow.jl")
+include("../observables/charge_pump.jl")
+
+include("../test/bosonic_fci.jl")
 
 export Bosonic, Fermionic, Statistics,
     Real_Space_Second_Quantized_Model,
@@ -37,7 +40,9 @@ export Bosonic, Fermionic, Statistics,
     save_checkpoint, load_checkpoint,
     update_second_quantized_model_with_twisted_phases!,
     flux_spectrum_flow,
-    build_haldane_fci_model, default_fci_sectors, test_haldane_fci_flux_flow
+    many_body_position_phases, flux_charge_pump,
+    build_zero_flux_bosonic_fci_second_quantized_model, default_fci_sectors,
+    test_bosonic_fci_spectrum_flow, test_bosonic_fci_charge_pump
 
 
 
