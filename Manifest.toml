@@ -1450,10 +1450,10 @@ uuid = "731e570b-9d59-4bfa-96dc-6df516fadf69"
 version = "0.11.9"
 
 [[deps.TightBinding]]
-deps = ["CairoMakie", "Graphs", "LinearAlgebra", "MLStyle", "Test"]
+deps = ["CairoMakie", "Graphs", "LinearAlgebra", "MLStyle", "SparseArrays", "Test"]
 path = "/home/hxd/Dropbox/GrothendieckUniverse/TightBinding/"
 uuid = "20fe1238-1445-43d3-9455-5ed0db04161c"
-version = "0.1.0"
+version = "0.3.0"
 
 [[deps.TranscodingStreams]]
 git-tree-sha1 = "0c45878dcfdcfa8480052b6ab162cdd138781742"
