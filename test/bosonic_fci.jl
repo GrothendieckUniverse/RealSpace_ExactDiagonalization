@@ -102,7 +102,7 @@ Test Spectrum Flow for the Bosonic FCI on Haldane Honeycomb lattice
     - `filling_fraction::Rational{Int}=1 // 2`: the filling **per flatband**. Note: the `filling_fraction` input in the ED constructor is the fractional per flattened vertices!
     - `mode::Symbol=:sectors`: Here model `:sectors` for symmetry-resolved sectors, `:identity` for full Hilbert space (any sector will be the same)
     - `flux_direction::Int=findfirst(d -> mod(sample_size[d], 2) == 0, 1:length(sample_size))`: Always set to along the direction that can be divided by the GSD of the topological ordered states (2 for semion TO here)
-    - `twisted_phases_list::Vector{Float64}=collect(range(0.0, 1.0; length=9))`: the list of twisted phased used to scan the twisted spectrum flow.
+    - `twisted_phases_over_2π_list::Vector{Float64}=collect(range(0.0, 1.0; length=9))`: the list of twisted phased used to scan the twisted spectrum flow.
 """
 function test_bosonic_fci_spectrum_flow(;
     sample_size::Vector{Int}=[2, 3],
@@ -110,9 +110,9 @@ function test_bosonic_fci_spectrum_flow(;
     filling_fraction::Rational{Int}=1 // 2, # filling per flatband
     mode::Symbol=:sectors,
     flux_direction::Int=findfirst(d -> mod(sample_size[d], 2) == 0, 1:length(sample_size)), # always along the direction that can be divided by the GSD (2 for semion TO here)
-    twisted_phases_list::Vector{Float64}=collect(range(0.0, 1.0; length=9)),
+    twisted_phases_over_2π_list::Vector{Float64}=collect(range(0.0, 1.0; length=9)),
 )
-    @info "Twisted phase list to be computed: $twisted_phases_list"
+    @info "Twisted phase list to be computed: $twisted_phases_over_2π_list"
     model = build_zero_flux_bosonic_fci_second_quantized_model(; sample_size=sample_size, params=params)
 
     @info "The chosen twisted phase direction: $flux_direction"
@@ -133,12 +133,11 @@ function test_bosonic_fci_spectrum_flow(;
         labels;
         filling_fraction=filling_fraction,
         flux_direction=flux_direction,
-        twisted_phases_list=twisted_phases_list,
+        twisted_phases_over_2π_list=twisted_phases_over_2π_list,
         nev=3,
         fig_path=joinpath(PROJECT_ROOT, "figures",
             "bosonic_FCI_spectrum_flow_$(tag)_$(sample_size).svg"),
-        checkpoint_path=joinpath(PROJECT_ROOT, "checkpoints",
-            "bosonic_FCI_spectrum_flow_$(tag)_$(sample_size).jld2"),
+        checkpoint_dir=joinpath(PROJECT_ROOT, "checkpoints"),
     )
 
     return result
@@ -160,7 +159,7 @@ branch by approximately one half charge — the finite-size version of the boson
     - `filling_fraction::Rational{Int}=1 // 2`: filling **per flatband**
     - `mode::Symbol=:sectors`: `:sectors` for symmetry-resolved, `:identity` for full Hilbert space
     - `flux_direction::Int=findfirst(d -> mod(sample_size[d], 2) == 0, 1:length(sample_size))`: flux direction (along even-size direction for semion GSD=2)
-    - `twisted_phases_list::Vector{Float64}=collect(range(0.0, 1.0; length=9))`: flux values to scan
+    - `twisted_phases_over_2π_list::Vector{Float64}=collect(range(0.0, 1.0; length=9))`: flux values to scan
     - `atol::Float64=0.08`: tolerance for charge quantisation check
 """
 function test_bosonic_fci_charge_pump(;
@@ -170,10 +169,10 @@ function test_bosonic_fci_charge_pump(;
     mode::Symbol=:sectors,
     flux_direction::Int=findfirst(d -> mod(sample_size[d], 2) == 0, 1:length(sample_size)),
     polarization_direction::Int=_default_polarization_direction(length(sample_size), flux_direction),
-    twisted_phases_list::Vector{Float64}=collect(range(0.0, 1.0; length=9)),
+    twisted_phases_over_2π_list::Vector{Float64}=collect(range(0.0, 1.0; length=9)),
     atol::Float64=0.08,
 )
-    @info "Twisted phase list to be computed: $twisted_phases_list"
+    @info "Twisted phase list to be computed: $twisted_phases_over_2π_list"
     model = build_zero_flux_bosonic_fci_second_quantized_model(; sample_size=sample_size, params=params)
 
     lattice = model.lattice
@@ -195,20 +194,19 @@ function test_bosonic_fci_charge_pump(;
         filling_fraction=filling_fraction_vertex,
         flux_direction=flux_direction,
         polarization_direction=polarization_direction,
-        twisted_phases_list=twisted_phases_list,
+        twisted_phases_over_2π_list=twisted_phases_over_2π_list,
         nev_per_sector=1,
         fig_path=joinpath(PROJECT_ROOT, "figures",
             "bosonic_FCI_charge_pump_$(tag)_$(sample_size).svg"),
-        checkpoint_path=joinpath(PROJECT_ROOT, "checkpoints",
-            "bosonic_FCI_charge_pump_$(tag)_$(sample_size).jld2"),
+        checkpoint_dir=joinpath(PROJECT_ROOT, "checkpoints"),
     )
 
     @testset "Bosonic FCI charge pump ($(sample_size), $mode)" begin
-        @test size(result.energies) == (length(twisted_phases_list), length(result.sector_labels), 1)
+        @test size(result.energies) == (length(twisted_phases_over_2π_list), length(result.sector_labels), 1)
         @test all(isfinite, result.energies[:, :, 1])
-        @test size(result.polarizations) == (length(twisted_phases_list), length(result.sector_labels))
+        @test size(result.polarizations) == (length(twisted_phases_over_2π_list), length(result.sector_labels))
 
-        if mode == :sectors && isapprox(twisted_phases_list[end], 1.0; atol=1e-12)
+        if mode == :sectors && isapprox(twisted_phases_over_2π_list[end], 1.0; atol=1e-12)
             @test all(isapprox.(abs.(result.pumped_charges), 0.5; atol=atol))
         end
     end

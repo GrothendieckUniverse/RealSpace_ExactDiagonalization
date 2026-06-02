@@ -1049,31 +1049,56 @@ function load_checkpoint(path::String)::Symmetry_Resolved_ED_Data
     return ed_data
 end
 
-"""
-Scan ALL Sectors to Update `ed_data.ed_scan_res`
----
-with support of two running modes `:matrix` and `:matrixfree` (on-the-fly, a little bit slower in general), and checkpoint serialize and recovery if `checkpoint_path` is provided.
+# ═══════════════════════════════════════════════════════════════════════════
+# 17e. Flux-insertion checkpoint — standard filename + scan over twisted phases
+# ═══════════════════════════════════════════════════════════════════════════
 
-- Args:
-    - `ed_data::Symmetry_Resolved_ED_Data`
-- Named Args:
-    - `nev::Int`: number of eigenvalues to compute for each sector
-    - `mode::Symbol`: either `:matrix` or `:matrixfree`. 
-    - `checkpoint_path::Union{String,Nothing}`:
-    - `use_distributed::Bool=true`
 """
-function ed_scan!(ed_data::Symmetry_Resolved_ED_Data;
+Generate the Universal Checkpoint Filename for ED Scan
+---
+for both conventional scan and flux-insertion scan. The format reads `{tb_model.model_name}_{sample_size}_ν_graph={num}_{den}_twisted_phases_over_2π_{twisted_phases_over_2π}_params={params_short}.jld2`.
+
+Here `params_short` just round ALL values of `params` to 3 digits.
+"""
+function ed_scan_checkpoint_filename(
+    model::Real_Space_Second_Quantized_Model,
+    twisted_phases_over_2π::AbstractVector{<:Real},
+    filling_fraction::Rational{Int},
+)::String
+    params_short = Dict{keytype(model.params), valtype(model.params)}()
+    for (k, v) in model.params
+        params_short[k] = round(v; digits=3)
+    end
+
+    return "$(model.tb_model.model_name)_$(model.lattice.sample_size)_ν_graph=$(numerator(filling_fraction))_$(denominator(filling_fraction))_twisted_phases_over_2π=$(twisted_phases_over_2π)_params=$(params_short).jld2"
+end
+
+"_Internal_: scan sectors of `ed_data` for optionally provided `scanned_sectors`"
+function _ed_scan_sectors!(ed_data::Symmetry_Resolved_ED_Data;
     nev::Int=5,
     mode::Symbol=:matrix,
     checkpoint_path::Union{String,Nothing}=nothing,
-    use_distributed::Bool=true
-)
+    use_distributed::Bool=true,
+    scanned_sectors::Union{Nothing,Vector{<:Tuple{Int,Int}}}=nothing,
+    overwrite::Bool=false,
+)::Union{String,Nothing}
+    # Resume from existing checkpoint if not overwriting
+    if checkpoint_path !== nothing && isfile(checkpoint_path) && !overwrite
+        @info "Loading existing checkpoint: $(checkpoint_path)"
+        loaded = load_checkpoint(checkpoint_path)
+        ed_data.ed_scan_res = loaded.ed_scan_res
+        return checkpoint_path
+    end
     n_total = length(ed_data.irrep_list)
     n_done = length(ed_data.ed_scan_res)
     n_done > 0 && println("[ED scan] $(n_done)/$(n_total) sectors already computed; resuming.")
 
     for (irrep_idx, irrep) in enumerate(ed_data.irrep_list)
         haskey(ed_data.ed_scan_res, irrep_idx) && continue
+        # If sector filter is provided, skip sectors not in the list
+        if scanned_sectors !== nothing && !(irrep.label in scanned_sectors)
+            continue
+        end
         println("[ED scan] Sector $(irrep_idx)/$(n_total) — irrep $(irrep.label)  [mode=$mode]")
         flush(stdout)
         if mode == :matrixfree
@@ -1084,13 +1109,87 @@ function ed_scan!(ed_data::Symmetry_Resolved_ED_Data;
             error("Unknown ED scan mode: $mode. Use :matrix or :matrixfree.")
         end
 
-        # Checkpoint after every sector
         if checkpoint_path !== nothing
             save_checkpoint(ed_data, checkpoint_path)
             println("    [checkpoint → $(checkpoint_path)]")
         end
     end
-    return ed_data.ed_scan_res
+    return checkpoint_path
+end
+
+"""
+Unified API for ED Scan 
+---
+with support of flux-insertion scan and checkpoint resume.
+- Args:
+    - `ed_data::ED_Data`: the ED data structure.
+- Named Args:
+    - `nev::Int=5`: number of eigenvalues/eigenvectors to compute for each sector.
+    - `mode::Symbol=:matrix`: the ED mode, can be `:matrix`
+    - `use_distributed::Bool=true`: enable distributed computation via `pmap`.
+    - `scanned_sectors::Union{Nothing,Vector{Tuple{Int,Int}}}=nothing`: filter for specific sector labels.
+    - `checkpoint_path::Union{String,Nothing}=nothing`: path to the checkpoint file to resume from. If a checkpoint file exists, resume scanning from the last saved state.
+    - `flux_direction::Int=1`: for flux-insertion scans, the direction of the twisted boundary condition
+    - `twisted_phases_over_2π_list::Union{Nothing,Vector{Float64}}=nothing`: the list of twisted phase (flux) values [in units of 2π] to scan over. If `nothing`, fallback to conventional ED scan (at fixed twisted boundary conditions)
+Returns:
+    - `Union{Nothing, Vector{String}}`:
+        - If `twisted_phases_over_2π_list === nothing`, returns the (single-element) checkpoint paths (if provided) or `nothing` (if not).
+        - If `twisted_phases_over_2π_list` is provided, returns the list of checkpoint paths saved.
+"""
+function ed_scan!(ed_data::Symmetry_Resolved_ED_Data;
+    nev::Int=5,
+    mode::Symbol=:matrix,
+    use_distributed::Bool=true,
+    scanned_sectors::Union{Nothing,Vector{<:Tuple{Int,Int}}}=nothing, # sector-specific scan support
+    # checkpoint support
+    checkpoint_path::Union{String,Nothing}=nothing,
+    checkpoint_dir::String="checkpoints",
+    overwrite::Bool=false,
+    # ── flux-scan extensions ──
+    flux_direction::Int=1,
+    twisted_phases_over_2π_list::Union{Nothing,Vector{Float64}}=nothing,
+)::Union{Nothing,Vector{String}}
+    @assert mode in [:matrix, :matrixfree]
+
+    if twisted_phases_over_2π_list === nothing # fallback to conventional ED scan
+        ckpt_path = _ed_scan_sectors!(ed_data; nev, mode, checkpoint_path, use_distributed, scanned_sectors, overwrite)
+        if isnothing(ckpt_path)
+            return nothing
+        else
+            return [ckpt_path]
+        end
+    end
+
+    # ── Flux-scan mode ──
+    model = ed_data.second_quantized_model
+    filling_fraction = ed_data.filling_fraction
+    mkpath(checkpoint_dir)
+    dim = model.lattice.dim
+
+    checkpoint_paths = Vector{String}()
+    for θ_val in twisted_phases_over_2π_list
+        flux = zeros(Float64, dim)
+        flux[flux_direction] = θ_val
+
+        ckpt_name = ed_scan_checkpoint_filename(model, flux, filling_fraction)
+        ckpt_path = joinpath(checkpoint_dir, ckpt_name)
+
+        if isfile(ckpt_path) && !overwrite
+            @info "Skipping θ=$θ_val — checkpoint exists: $ckpt_name"
+            push!(checkpoint_paths, ckpt_path)
+            continue
+        end
+
+        update_second_quantized_model_with_twisted_phases!(model; twisted_phases_over_2π=flux)
+        active_group = build_translation_group(model.lattice, flux)
+        θ_ed_data = build_ed_data(model; filling_fraction=filling_fraction, symmetry_group=active_group)
+        _ed_scan_sectors!(θ_ed_data; nev, mode, use_distributed, scanned_sectors, overwrite)
+        save_checkpoint(θ_ed_data, ckpt_path)
+        @info "Saved ED scan @ θ=$θ_val → $ckpt_name"
+        push!(checkpoint_paths, ckpt_path)
+    end
+
+    return checkpoint_paths
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1103,21 +1202,11 @@ function build_identity_group(n_site::Int)::Finite_Symmetry_Group
 end
 
 """
-    build_translation_group(lattice, [θ])
+Build the (Flux-aware) Lattice Translation Group ℤ^{L₁}×ℤ^{L₂}.
+---
+When `θ` is omitted or all zeros, the operations are bare permutations (no per-site phases).  This is the fast path used for ordinary symmetry-resolved ED.
 
-Build the lattice translation group ℤ_{L₁}×ℤ_{L₂}.
-
-When `θ` is omitted or all zeros, the operations are bare permutations (no
-per-site phases).  This is the fast path used for ordinary symmetry-resolved ED.
-
-When `θ` is supplied (or read from `lattice.twisted_phases_over_2π`), each site
-that crosses a periodic boundary under translation acquires the gauge-covariant
-phase `g(x)/g(Tx)` with `g(x)=exp(i 2π θ⋅x/L)`.  The resulting group commutes
-with the flux-inserted Hamiltonian `H(θ)` while keeping the irrep labels (i.e.
-the ordinary momentum labels) unchanged — the entire flux physics is captured in
-the per-site phases of the group operations themselves.
-
-This function replaces the former separate `build_twisted_translation_group`.
+When `θ` is supplied (or read from `lattice.twisted_phases_over_2π`), each site that crosses a periodic boundary under translation acquires the gauge-covariant phase `g(x)/g(Tx)` with `g(x)=exp(i 2π θ⋅x/L)`.  The resulting group commutes with the flux-inserted Hamiltonian `H(θ)` while keeping the irrep labels (i.e. the ordinary momentum labels) unchanged — the entire flux physics is captured in the per-site phases of the group operations themselves.
 """
 function build_translation_group(
     lattice::TightBinding.Real_Space_Lattice,

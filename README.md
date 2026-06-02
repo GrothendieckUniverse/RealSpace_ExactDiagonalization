@@ -332,10 +332,10 @@ result = flux_spectrum_flow(
     [(0, 0), (1, 0)];
     filling_fraction=1//4,   # 3 bosons / 12 vertices
     flux_direction=1,
-    twisted_phases_list=collect(range(0.0, 2.0; length=9)),
+    twisted_phases_over_2π_list=collect(range(0.0, 2.0; length=9)),
     nev=3,
     fig_path="figures/haldane_fci_flux_flow_sectors.svg",
-    checkpoint_path="checkpoints/haldane_fci_flux_flow_sectors.jld2",
+    checkpoint_dir="checkpoints",
 )
 
 # Or full Hilbert-space scan (identity group)
@@ -343,7 +343,7 @@ result_full = flux_spectrum_flow(
     model,
     :identity;
     filling_fraction=1//4,
-    twisted_phases_list=collect(range(0.0, 1.0; length=9)),
+    twisted_phases_over_2π_list=collect(range(0.0, 1.0; length=9)),
     nev=3,
     fig_path="figures/haldane_fci_flux_flow_identity.svg",
 )
@@ -368,7 +368,7 @@ pump = flux_charge_pump(
     filling_fraction=1//4,
     flux_direction=1,        # θ_x flux
     polarization_direction=2, # U_y polarization; this is the 2D default
-    twisted_phases_list=collect(range(0.0, 1.0; length=9)),
+    twisted_phases_over_2π_list=collect(range(0.0, 1.0; length=9)),
     fig_path="figures/haldane_fci_charge_pump_sectors.svg",
 )
 
@@ -380,13 +380,17 @@ pump.pumped_charges  # approximately [0.5, 0.5]
 | Function | Description |
 |----------|------------|
 | `build_zero_flux_bosonic_fci_second_quantized_model(; sample_size, params)` | Construct the bosonic Haldane FCI model |
-| `default_fci_sectors(sample_size)` | Return the momentum sectors hosting the two FCI ground states |
+| `build_zero_flux_fermionic_fci_second_quantized_model(; sample_size, params)` | Construct the fermionic checkerboard FCI model (ν=2/3) |
+| `default_fci_sectors(sample_size)` | Return momentum sectors hosting the two bosonic FCI ground states |
+| `default_fci_sectors_fermionic(sample_size)` | Return momentum sectors hosting the three fermionic FCI ground states |
+| `ed_scan!(ed_data; kwargs...)` | Unified ED scan — conventional or flux-scan mode with checkpoint resume |
 | `flux_spectrum_flow(model, labels; kwargs...)` | Scan E(θ) for given sector labels |
 | `flux_charge_pump(model, labels; kwargs...)` | Compute the one-dimensional fractional charge pump |
 | `many_body_position_phases(lattice, direction)` | Build the site phases for Resta's periodic position operator |
 | `update_orbit_stabilizer_phases!(catalog, group, stats)` | In-place stabiliser update for flux scans |
 | `build_translation_group(lattice, [θ])` | Build translation group, optionally with flux phases |
 | `update_second_quantized_model_with_twisted_phases!(model; twisted_phases_over_2π)` | In-place Peierls substitution to hopping terms |
+| `ed_scan_checkpoint_filename(model, θ, filling)` | Canonical self-describing checkpoint filename |
 
 ### Physics Background
 
@@ -402,11 +406,49 @@ On a torus with $L_x \times L_y$ unit cells and $n_{\text{filled}}$ particles:
 ```julia
 # From within a Julia session:
 using RealSpace_ExactDiagonalization
-test_bosonic_fci_flux_flow(; sample_size=[2,3], twisted_phases_list=collect(range(0.0,2.0;length=9)), mode=:sectors)
-test_bosonic_fci_charge_pump(; sample_size=[2,3], twisted_phases_list=collect(range(0.0,1.0;length=9)), mode=:sectors)
+test_bosonic_fci_spectrum_flow(; sample_size=[2,3], twisted_phases_over_2π_list=collect(range(0.0,2.0;length=9)), mode=:sectors)
+test_bosonic_fci_charge_pump(; sample_size=[2,3], twisted_phases_over_2π_list=collect(range(0.0,1.0;length=9)), mode=:sectors)
+test_fermionic_fci_spectrum_flow(; sample_size=[3,4], twisted_phases_over_2π_list=collect(range(0.0,1.0;length=5)), mode=:sectors)
+test_fermionic_fci_charge_pump(; sample_size=[3,4], twisted_phases_over_2π_list=collect(range(0.0,1.0;length=5)), mode=:sectors)
 ```
 
 The spectrum-flow tests verify that the two FCI ground states exchange after one flux quantum and return after two.  The charge-pump test directly verifies the projected polarization winding $\Delta Q \approx 1/2$ for both branches.
+
+### Fermionic Fractional Chern Insulator (Checkerboard Lattice)
+
+The package includes a fermionic FCI model on the checkerboard lattice at $\nu=2/3$ filling of the lower Chern band, following Sun, Gu, Katsura, and Das Sarma (arXiv:1012.5864).  With nearest-neighbor repulsion $V_1=2.0$, $V_2=1.0$, the interacting ground state shows three nearly-degenerate states (GSD = 3) on the torus at crystal momenta $(0,0)$, $(1,0)$, $(2,0)$.
+
+The fractional charge pump yields $\Delta Q \approx 2/3$ per branch (three branches summing to $2$).
+
+> **⚠️ Minimum System Size:** The fermionic $\nu=2/3$ FCI topological phase is **only clearly visible for sample sizes $\geq [3,4]$**.  On smaller lattices (e.g. $[2,3]$ with only 12 sites and 4 fermions) the many-body gap is not well-formed and the pumped charge may not quantize to $2/3$.
+
+```julia
+model = build_zero_flux_fermionic_fci_second_quantized_model(; sample_size=[3,4])
+
+# Spectrum flow — tracks the three FCI ground states
+result = flux_spectrum_flow(
+    model,
+    default_fci_sectors_fermionic([3,4]);
+    filling_fraction=1//3,   # ν=2/3 per band → 1/3 per vertex
+    flux_direction=1,
+    twisted_phases_over_2π_list=collect(range(0.0, 1.0; length=5)),
+    nev=3,
+    fig_path="figures/fermionic_FCI_spectrum_flow.svg",
+    checkpoint_dir="checkpoints",
+)
+
+# Charge pump — each of the 3 branches winds by ΔQ ≈ 2/3
+pump = flux_charge_pump(
+    model,
+    default_fci_sectors_fermionic([3,4]);
+    filling_fraction=1//3,
+    flux_direction=1,
+    twisted_phases_over_2π_list=collect(range(0.0, 1.0; length=5)),
+    fig_path="figures/fermionic_FCI_charge_pump.svg",
+    checkpoint_dir="checkpoints",
+)
+pump.pumped_charges  # approximately [2/3, 2/3, 2/3]
+```
 
 ---
 
