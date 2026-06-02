@@ -160,24 +160,26 @@ end
 """
 Core Method to Compute the Many-Body Charge Pump Under a Twisted Boundary Condition
 ---
-Insert a flux `θ` along `flux_direction`, diagonalise the low-energy many-body states, project Resta's periodic position operator `exp(2π i X/L)` into that manifold, and unwrap the phase branches to obtain the pumped charge.
-
-This is a one-dimensional flux-cylinder diagnostic (not a 2D many-body Chern number). At fractional filling a single-sector expectation value can vanish by translation symmetry; passing the full topological multiplet (e.g. `[(0,0), (1,0)]` for the `[2,3]` Haldane FCI) allows the position operator to connect the sectors.
+Reads the full symmetry-resolved ED data from canonical per-θ checkpoints
+(produced by [`ed_scan!`](@ref) in flux-scan mode), projects Resta's periodic
+position operator `exp(2π i X/L)` into the low-energy manifold for the requested
+sectors, and unwraps the phase branches.
 
 - Args:
-    - `model::Real_Space_Second_Quantized_Model`: the second quantized model
-    - `sector_labels`: `:identity` (full Hilbert space) or a `Vector` of sector labels, e.g. `[(0,0), (1,0)]`
+    - `model::Real_Space_Second_Quantized_Model`
+    - `sector_labels`: `:identity` or a `Vector` of sector tuples
 - Named Args:
     - `filling_fraction::Rational{Int}`: particles per flattened vertex
-    - `flux_direction::Int=1`: direction along which flux is threaded
-    - `polarization_direction::Int`: direction of the polarisation measurement (default: transverse to flux)
-    - `twisted_phases_list::Vector{Float64}=collect(range(0.0,1.0;length=9))`: list of flux values
-    - `nev_per_sector::Int=1`: number of low-lying states per symmetry sector
-    - `include_sublattice::Bool=true`: include sublattice offset in position coordinate
-    - `fig_path::Union{Nothing,String}=nothing`: path to save SVG/PNG figure
-    - `checkpoint_path::Union{Nothing,String}=nothing`: path to JLD2 checkpoint
+    - `flux_direction::Int=1`
+    - `polarization_direction::Int`: default transverse to flux
+    - `twisted_phases_over_2π_list::Vector{Float64}=collect(range(0.0, 1.0; length=9))`
+    - `nev_per_sector::Int=1`: low-lying states per sector
+    - `include_sublattice::Bool=true`
+    - `checkpoint_dir::String=\"checkpoints\"`: directory for per-θ checkpoints
+    - `fig_path::Union{Nothing,String}=nothing`
+    - `overwrite::Bool=false`
 - Returns:
-    - `res::NamedTuple`: `twisted_phases_list`, `energies`, `pumped_charge_trajectories`, `pumped_charges`, ...
+    - `res::NamedTuple`: `pumped_charges`, `pumped_charge_trajectories`, `polarizations`, ...
 """
 function flux_charge_pump(
     model::Real_Space_Second_Quantized_Model,
@@ -185,11 +187,12 @@ function flux_charge_pump(
     filling_fraction::Rational{Int},
     flux_direction::Int=1,
     polarization_direction::Int=_default_polarization_direction(model.lattice.dim, flux_direction),
-    twisted_phases_list::Vector{Float64}=collect(range(0.0, 1.0; length=9)),
+    twisted_phases_over_2π_list::Vector{Float64}=collect(range(0.0, 1.0; length=9)),
     nev_per_sector::Int=1,
     include_sublattice::Bool=true,
+    checkpoint_dir::String="checkpoints",
     fig_path::Union{Nothing,String}=nothing,
-    checkpoint_path::Union{Nothing,String}=nothing,
+    overwrite::Bool=false,
 )
     # ── Resolve sector labels ──
     is_identity = sector_labels == :identity
@@ -202,41 +205,45 @@ function flux_charge_pump(
     1 <= polarization_direction <= dim || error("polarization_direction must be in 1:$dim.")
 
     nstates = length(labels) * nev_per_sector
-    energies = fill(NaN, length(twisted_phases_list), length(labels), nev_per_sector)
-    polarization_eigenvalues = Matrix{ComplexF64}(undef, length(twisted_phases_list), nstates)
-    polarization_matrices = Vector{Matrix{ComplexF64}}(undef, length(twisted_phases_list))
+    energies = fill(NaN, length(twisted_phases_over_2π_list), length(labels), nev_per_sector)
+    polarization_eigenvalues = Matrix{ComplexF64}(undef, length(twisted_phases_over_2π_list), nstates)
 
-    # ── Initialise model at θ=0, build ED data once ──
-    flux0 = zeros(Float64, dim)
+    # ── Ensure all per-θ ED checkpoints exist (shared with spectrum flow) ──
+    flux0 = zeros(Float64, model.lattice.dim)
     update_second_quantized_model_with_twisted_phases!(model; twisted_phases_over_2π=flux0)
-    init_group = is_identity ? build_identity_group(model.lattice.n_site) :
-                 build_translation_group(model.lattice, flux0)
-    ed_data = build_ed_data(model; filling_fraction=filling_fraction, symmetry_group=init_group)
+    init_ed_data = build_ed_data(model; filling_fraction=filling_fraction,
+        symmetry_group=build_translation_group(model.lattice, flux0))
 
-    for (iθ, θ_val) in enumerate(twisted_phases_list)
-        flux = zeros(Float64, dim)
-        flux[flux_direction] = θ_val
+    checkpoint_paths = ed_scan!(init_ed_data;
+        nev=max(nev_per_sector, 2),  # need at least 1 eigenvector
+        mode=:matrix,
+        twisted_phases_over_2π_list=twisted_phases_over_2π_list,
+        flux_direction=flux_direction,
+        checkpoint_dir=checkpoint_dir,
+        overwrite=overwrite,
+        scanned_sectors=(is_identity ? nothing : labels),
+    )
 
-        # ── In-place update: bilinear terms + symmetry group + catalog ──
-        update_second_quantized_model_with_twisted_phases!(model; twisted_phases_over_2π=flux)
+    for (iθ, ckpt_path) in enumerate(checkpoint_paths)
+        ed_data = load_checkpoint(ckpt_path)
 
-        if is_identity
-            ed_data.symmetry_group = build_identity_group(model.lattice.n_site)
-        else
-            active_group = build_translation_group(model.lattice, flux)
-            ed_data.symmetry_group = active_group
-            update_orbit_stabilizer_phases!(ed_data.orbit_catalog, active_group, model.statistics)
-        end
-
-        # ── Diagonalise & build sector bases ──
+        # ── Build sector bases and extract eigenvectors ──
         bases = Dict{Any,Symmetry_Sector_Basis}()
         eigvecs = Dict{Any,Matrix{ComplexF64}}()
         for (ilabel, label) in enumerate(labels)
-            vals, vecs = ed_scan_at_irrep_matrix!(label, ed_data; nev=nev_per_sector)
-            energies[iθ, ilabel, 1:length(vals)] .= vals
-            irrep, _ = _irrep_for_label(ed_data, label)
+            irrep_idx = findfirst(irrep -> irrep.label == label, ed_data.irrep_list)
+            if irrep_idx === nothing || !haskey(ed_data.ed_scan_res, irrep_idx)
+                @warn "Sector $label not found in checkpoint $ckpt_path"
+                continue
+            end
+            vecs = ed_data.ed_scan_res[irrep_idx][2]
+            nv = min(size(vecs, 2), nev_per_sector)
+            eigvecs[label] = vecs[:, 1:nv]
+            vals = ed_data.ed_scan_res[irrep_idx][1]
+            energies[iθ, ilabel, 1:min(length(vals), nev_per_sector)] .= vals[1:min(length(vals), nev_per_sector)]
+
+            irrep = ed_data.irrep_list[irrep_idx]
             bases[label] = build_symmetry_sector_basis(ed_data.orbit_catalog, irrep)
-            eigvecs[label] = vecs
         end
 
         # ── Build position operator matrix projected into the low-energy manifold ──
@@ -263,7 +270,6 @@ function flux_charge_pump(
             end
         end
 
-        polarization_matrices[iθ] = P
         ev = eigen(P).values
         order = sortperm(angle.(ev))
         polarization_eigenvalues[iθ, :] .= ev[order]
@@ -279,15 +285,17 @@ function flux_charge_pump(
     if !isnothing(fig_path)
         mkpath(dirname(fig_path))
         fig = Figure(size=(800, 600))
+        sectors_str = is_identity ? "Full Hilbert Space" : join(repr.(labels), ", ")
         ax = Axis(fig[1, 1];
             xlabel="Inserted Flux [2π] along Direction-$(flux_direction)",
             ylabel="Pumped Charge ΔQ",
-            title="$(model.lattice.sample_size)-sample Charge Pump ($(is_identity ? "Full" : "Sector-Resolved"))"
+            title="$(model.lattice.sample_size)-sample Charge Pump — sectors: $sectors_str"
         )
         for b in 1:nstates
-            lines!(ax, twisted_phases_list, pumped_charge_trajectories[:, b];
-                color=Makie.Cycled(b), linewidth=2, label="branch $b")
-            scatter!(ax, twisted_phases_list, pumped_charge_trajectories[:, b];
+            lbl = is_identity ? "branch $b" : "sector $(repr(labels[mod1(b, length(labels))])) branch $(div(b-1, length(labels))+1)"
+            lines!(ax, twisted_phases_over_2π_list, pumped_charge_trajectories[:, b];
+                color=Makie.Cycled(b), linewidth=2, label=lbl)
+            scatter!(ax, twisted_phases_over_2π_list, pumped_charge_trajectories[:, b];
                 color=Makie.Cycled(b), markersize=6)
         end
         axislegend(ax; position=:lt)
@@ -295,20 +303,12 @@ function flux_charge_pump(
         @info "charge pump plot saved to `$fig_path`"
     end
 
-    # ── Checkpoint ──
-    if !isnothing(checkpoint_path)
-        mkpath(dirname(checkpoint_path))
-        result = (; twisted_phases_list, energies, sector_labels=labels, flux_direction,
-            polarization_direction, nev_per_sector, polarization_eigenvalues,
-            polarization_matrices, polarizations, pumped_charge_trajectories, pumped_charges,
-            include_sublattice, is_identity, fig_path)
-        @save checkpoint_path result
-    end
+    @info "Pumped Charges for sectors $sector_labels: $pumped_charges"
 
-    res = (; twisted_phases_list, energies, sector_labels=labels, flux_direction,
+    res = (; twisted_phases_over_2π_list, energies, sector_labels=labels, flux_direction,
         polarization_direction, nev_per_sector, polarization_eigenvalues,
-        polarization_matrices, polarizations, pumped_charge_trajectories, pumped_charges,
-        include_sublattice, is_identity, fig_path)
+        polarizations, pumped_charge_trajectories, pumped_charges,
+        include_sublattice, is_identity, fig_path, checkpoint_paths)
 
     return res
 end
