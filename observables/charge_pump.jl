@@ -48,7 +48,7 @@ function _position_operator_matrix(
     basis_to::Symmetry_Sector_Basis,
     basis_from::Symmetry_Sector_Basis,
     site_phases::Vector{ComplexF64},
-    statistics::Statistics,
+    statistics::Particle_Statistics,
 )::SparseMatrixCSC{ComplexF64,Int}
     G = basis_from.symmetry_group
     @assert basis_to.symmetry_group.name == G.name

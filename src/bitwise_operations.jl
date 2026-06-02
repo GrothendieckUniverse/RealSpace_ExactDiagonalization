@@ -49,7 +49,38 @@ function empty_site_iter_for_mask(m::Mask, n_site::Int)::Base.Generator
 end
 
 
+"bit representation for a configuration `occ` (vector of occupied site linear indices). Here each element in `occ` is the 1-based linear index of the occupied site in the lattice"
+function encode_configuration_to_bit_mask(occ::Vector{Int})::Mask
+    m = zero(Mask)
+    @inbounds @simd for i in occ
+        m = occupy_site_for_mask(m, Int(i))
+    end
+    return m
+end
 
+"get the configuration (vector of occupied site linear indices) from bit mask `m`. This is the inverse operation of `encode_configuration_to_bit_mask()`"
+function decode_bit_mask_to_configuration(m::Mask, n_site::Int)::Vector{Int}
+    occ = Vector{Int}()
+    @inbounds for i in 1:n_site
+        if is_site_occupied(m, i)
+            push!(occ, i)
+        end
+    end
+    return occ
+end
+
+"_in-place_ update of the configuration (vector of occupied site linear indices) from bit mask `m` in-place by overwriting the existing entries in `occ`. This is the inverse operation of `encode_configuration_to_bit_mask()`"
+function decode_bit_mask_to_configuration!(occ::Vector{Int}, m::Mask, n_site::Int)
+    @assert length(occ) == n_occupied_for_mask(m)
+    n = 1
+    @inbounds @simd for i in 1:n_site
+        if is_site_occupied(m, i)
+            occ[n] = i # we just overwrite the existing entries in `occ`
+            n += 1
+        end
+    end
+    return occ
+end
 
 
 end # module `BitWise_Operations`

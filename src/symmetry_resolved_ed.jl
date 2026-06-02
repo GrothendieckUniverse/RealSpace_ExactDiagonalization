@@ -42,7 +42,8 @@ BLAS.set_num_threads(1)  # HPC default: one BLAS thread per process
 using .BitWise_Operations: Mask, COMPLEX_ONE, bitmask_of_site,
     occupy_site_for_mask, empty_site_for_mask,
     is_site_occupied, is_site_empty, n_occupied_for_mask,
-    filled_site_iter_for_mask, empty_site_iter_for_mask
+    filled_site_iter_for_mask, empty_site_iter_for_mask,
+    encode_configuration_to_bit_mask, decode_bit_mask_to_configuration, decode_bit_mask_to_configuration!
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 1. Symmetry Operation — a single group element
@@ -159,11 +160,16 @@ end
     return new_mask, phase * parity
 end
 
+"Convenience 2-argument wrapper matching the legacy `apply_operation_to_mask` API (defaults to Bosonic statistics)."
+@inline function apply_operation_to_mask(m::Mask, op::Symmetry_Operation)::Tuple{Mask,ComplexF64}
+    return apply_operation_to_mask(m, op, Bosonic())
+end
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. Canonical representative (O(|G|) — used only during precomputation)
 # ═══════════════════════════════════════════════════════════════════════════
 
-function get_canonical_representative(m::Mask, G::Finite_Symmetry_Group, stats::Statistics)::Tuple{Mask,Int,ComplexF64}
+function get_canonical_representative(m::Mask, G::Finite_Symmetry_Group, stats::Particle_Statistics)::Tuple{Mask,Int,ComplexF64}
     repr = m
     best_g = G.identity_idx
     best_amp = COMPLEX_ONE
@@ -215,7 +221,7 @@ of the operations, which is unchanged, so only the accumulated U(1) phases need
 recomputation.  This avoids re-running Gosper's hack at every flux point.
 """
 function update_orbit_stabilizer_phases!(catalog::Symmetry_Orbit_Catalog,
-    new_group::Finite_Symmetry_Group, statistics::Statistics)
+    new_group::Finite_Symmetry_Group, statistics::Particle_Statistics)
     catalog.symmetry_group == new_group && return catalog  # no-op
     catalog.symmetry_group = new_group
     @inbounds for orbit_idx in eachindex(catalog.representative_mask_list)
@@ -235,7 +241,7 @@ function build_symmetry_orbit_catalog(;
     second_quantized_model::Second_Quantized_Model,
     n_filled::Int,
     symmetry_group::Finite_Symmetry_Group,
-    statistics::Statistics,
+    statistics::Particle_Statistics,
 )::Symmetry_Orbit_Catalog
     n_site = symmetry_group.n_site
     @assert n_site == second_quantized_model.lattice.n_site
@@ -416,7 +422,7 @@ to avoid repeated O(|G|) canonicalization of the same scattered masks.
 """
 struct CanonicalMap
     symmetry_group::Finite_Symmetry_Group
-    statistics::Statistics
+    statistics::Particle_Statistics
     cache::Dict{Mask,Tuple{Mask,Int,ComplexF64}}   # scattered mask → canonical data
 end
 
@@ -474,6 +480,14 @@ Used uniformly by matrix, distributed-matrix, and matrix-free modes.
 """
 @inline function project_to_sector(m::Mask, basis::Symmetry_Sector_Basis, cmap::CanonicalMap)
     repr, g_idx, α = get_canonical(cmap, m)
+    idx = _basis_index(basis, repr)
+    idx == 0 && return nothing
+    return (idx, α * conj(basis.irrep.values[g_idx]))
+end
+
+"Legacy wrapper: project a raw mask (not necessarily a canonical representative) to the unnormalized symmetry sector basis. Returns `(repr_idx, coeff)` or `nothing`."
+@inline function project_to_unnormalized_sector(m::Mask, basis::Symmetry_Sector_Basis, stats=Bosonic())
+    repr, g_idx, α = get_canonical_representative(m, basis.symmetry_group, stats)
     idx = _basis_index(basis, repr)
     idx == 0 && return nothing
     return (idx, α * conj(basis.irrep.values[g_idx]))
@@ -1065,7 +1079,7 @@ function ed_scan_checkpoint_filename(
     twisted_phases_over_2π::AbstractVector{<:Real},
     filling_fraction::Rational{Int},
 )::String
-    params_short = Dict{keytype(model.params), valtype(model.params)}()
+    params_short = Dict{keytype(model.params),valtype(model.params)}()
     for (k, v) in model.params
         params_short[k] = round(v; digits=3)
     end

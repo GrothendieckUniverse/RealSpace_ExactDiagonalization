@@ -22,7 +22,8 @@ include("../observables/charge_pump.jl")
 include("../test/bosonic_fci.jl")
 include("../test/fermionic_fci.jl")
 
-export Bosonic, Fermionic, Statistics,
+export encode_configuration_to_bit_mask, decode_bit_mask_to_configuration, decode_bit_mask_to_configuration!,
+    Bosonic, Fermionic, Particle_Statistics,
     Real_Space_Second_Quantized_Model,
     Symmetry_Operation, Finite_Symmetry_Group, OneDim_Irrep,
     Symmetry_Orbit_Catalog, Symmetry_Sector_Basis, Symmetry_Resolved_ED_Data,
