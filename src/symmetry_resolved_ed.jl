@@ -197,12 +197,38 @@ end
 # 6. Symmetry Orbit Catalog
 # ═══════════════════════════════════════════════════════════════════════════
 
-struct Symmetry_Orbit_Catalog
+mutable struct Symmetry_Orbit_Catalog
     symmetry_group::Finite_Symmetry_Group
     representative_mask_list::Vector{Mask}
     stabilizer_order_list::Vector{Int}
     stabilizer_g_indices_list::Vector{Vector{Int}}
     stabilizer_phases_list::Vector{Vector{ComplexF64}}
+end
+
+"""
+    update_orbit_stabilizer_phases!(catalog, new_group, statistics)
+
+In-place update of the stabilizer phases when the symmetry group is replaced by
+a gauge-covariant (e.g. flux-aware) copy.  The orbit *partition* (representative
+masks and stabilizer group-element indices) depends only on the permutation part
+of the operations, which is unchanged, so only the accumulated U(1) phases need
+recomputation.  This avoids re-running Gosper's hack at every flux point.
+"""
+function update_orbit_stabilizer_phases!(catalog::Symmetry_Orbit_Catalog,
+    new_group::Finite_Symmetry_Group, statistics::Statistics)
+    catalog.symmetry_group == new_group && return catalog  # no-op
+    catalog.symmetry_group = new_group
+    @inbounds for orbit_idx in eachindex(catalog.representative_mask_list)
+        gidxs = catalog.stabilizer_g_indices_list[orbit_idx]
+        phases = catalog.stabilizer_phases_list[orbit_idx]
+        for (j, gidx) in enumerate(gidxs)
+            _, α = apply_operation_to_mask(
+                catalog.representative_mask_list[orbit_idx],
+                new_group.operations[gidx], statistics)
+            phases[j] = α
+        end
+    end
+    return catalog
 end
 
 function build_symmetry_orbit_catalog(;
@@ -1011,7 +1037,7 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 "Save ED data to a checkpoint file using JLD2"
-function save_checkpoint(ed_data::Symmetry_Resolved_ED_Data, path::String)
+function save_checkpoint(ed_data::Symmetry_Resolved_ED_Data, path::String)::Nothing
     mkpath(dirname(path))
     @save path ed_data
     return nothing
@@ -1034,13 +1060,13 @@ with support of two running modes `:matrix` and `:matrixfree` (on-the-fly, a lit
     - `nev::Int`: number of eigenvalues to compute for each sector
     - `mode::Symbol`: either `:matrix` or `:matrixfree`. 
     - `checkpoint_path::Union{String,Nothing}`:
-    - `use_distributed::Bool=false`
+    - `use_distributed::Bool=true`
 """
 function ed_scan!(ed_data::Symmetry_Resolved_ED_Data;
     nev::Int=5,
     mode::Symbol=:matrix,
     checkpoint_path::Union{String,Nothing}=nothing,
-    use_distributed::Bool=false
+    use_distributed::Bool=true
 )
     n_total = length(ed_data.irrep_list)
     n_done = length(ed_data.ed_scan_res)
@@ -1076,17 +1102,52 @@ function build_identity_group(n_site::Int)::Finite_Symmetry_Group
     return Finite_Symmetry_Group("identity", [id_op]; identity_idx=1)
 end
 
-function build_translation_group(lattice::TightBinding.Real_Space_Lattice)::Finite_Symmetry_Group
+"""
+    build_translation_group(lattice, [θ])
+
+Build the lattice translation group ℤ_{L₁}×ℤ_{L₂}.
+
+When `θ` is omitted or all zeros, the operations are bare permutations (no
+per-site phases).  This is the fast path used for ordinary symmetry-resolved ED.
+
+When `θ` is supplied (or read from `lattice.twisted_phases_over_2π`), each site
+that crosses a periodic boundary under translation acquires the gauge-covariant
+phase `g(x)/g(Tx)` with `g(x)=exp(i 2π θ⋅x/L)`.  The resulting group commutes
+with the flux-inserted Hamiltonian `H(θ)` while keeping the irrep labels (i.e.
+the ordinary momentum labels) unchanged — the entire flux physics is captured in
+the per-site phases of the group operations themselves.
+
+This function replaces the former separate `build_twisted_translation_group`.
+"""
+function build_translation_group(
+    lattice::TightBinding.Real_Space_Lattice,
+    θ::AbstractVector{<:Real}=Float64[],
+)::Finite_Symmetry_Group
     n_site = lattice.n_site
-    L1, L2 = lattice.sample_size
+    L = lattice.sample_size
+
+    # Resolve θ: explicit argument, then lattice built-in, then zeros
+    if isempty(θ)
+        θ_use = isempty(lattice.twisted_phases_over_2π) ?
+                zeros(Float64, lattice.dim) : Float64.(lattice.twisted_phases_over_2π)
+    else
+        length(θ) == lattice.dim || error("θ must have length $(lattice.dim).")
+        θ_use = Float64.(θ)
+    end
+
+    Lf = Float64.(L)
+
     ops = Symmetry_Operation{Tuple{Int,Int}}[]
-    for dx in 0:(L1-1), dy in 0:(L2-1)
+    for dx in 0:(L[1]-1), dy in 0:(L[2]-1)
+        shift = [dx, dy]
         perm = Vector{Int}(undef, n_site)
+        phases = Vector{ComplexF64}(undef, n_site)
         @inbounds for (i, (cell_int, isub)) in enumerate(lattice.site_list)
-            shifted_cell = mod.(cell_int .+ [dx, dy], lattice.sample_size)
+            shifted_cell = mod.(cell_int .+ shift, L)
             perm[i] = lattice.site_to_index_map[(shifted_cell, isub)]
+            phases[i] = cis(2π * dot(θ_use, (cell_int .- shifted_cell) ./ Lf))
         end
-        push!(ops, Symmetry_Operation((dx, dy), perm))
+        push!(ops, Symmetry_Operation((dx, dy), perm; perm_phases=phases))
     end
     return Finite_Symmetry_Group("translations", ops; identity_idx=1)
 end
@@ -1140,13 +1201,13 @@ by internally call `build_symmetry_orbit_catalog`, `build_irrep_list`, etc.
     - `filling_fraction::Rational{Int}=1//2`: the filling per FLATTENED VERTICES!
     - `symmetry_group::Finite_Symmetry_Group=build_identity_group(second_quantized_model
 
-**Note:** Here `filling_fraction` is the *particle number per _flatten_ed vertex*. For example:
+**Note:** Here `filling_fraction` is the *particle number per _flatten_ed vertex*. So we ALWAYA have `n_filled = Int(filling_fraction * n_site)`. For example:
 - For a spinful Hubbard model with 2×(Lx·Ly) vertices, the so-called "half-filling" means site-filling, i.e., one particle per vertex → `filling_fraction=1//2`.
 - For most fractional Chern insulator communities, such as the bose Hubbard model over Haldane honeycomb lattice, or the spinless fermoinic Hubbard model over checkerboard lattice, the filling is per band!!!
 """
 function build_ed_data(second_quantized_model::Real_Space_Second_Quantized_Model;
     filling_fraction::Rational{Int}=1 // 2,
-    symmetry_group::Finite_Symmetry_Group
+    symmetry_group::Finite_Symmetry_Group,
 )::Symmetry_Resolved_ED_Data
     n_site = second_quantized_model.lattice.n_site
     n_filled = Int(filling_fraction * n_site)
@@ -1233,16 +1294,14 @@ Plot the ED Spectrum Resolved by Symmetry Sectors (1D Irreps)
 - Named Args:
     - `shift_to_zero::Bool=true`: whether to shift the spectrum such that the minimum eigenvalue is zero
     - `show_spec::Bool=true`: whether to print the numerical values of the ED spectrum
-    - `save_plot::Bool=true`: whether to save the plot as an SVG file in the `figures/ED/` directory
-    - `fig_path::Union{Nothing,String}=nothing`: optional file path for saving the plot, will only be used if `save_plot=true`
+    - `save_plot_path::Union{String,Nothing}`: absolute path to save the generated plot, default to `nothing`
 """
 function plot_ed_scan_res(
     ed_data::Symmetry_Resolved_ED_Data;
     shift_to_zero::Bool=true,
-    save_plot::Bool=false,
-    fig_path::Union{Nothing,String}=nothing,
+    save_plot_path::Union{Nothing,String}=nothing,
     show_spec::Bool=true,
-)
+)::Tuple{CairoMakie.Figure,CairoMakie.Axis}
     scanned_indices = sort(collect(keys(ed_data.ed_scan_res)))
     nev = isempty(scanned_indices) ? 1 : length(ed_data.ed_scan_res[scanned_indices[1]][1])
     spec = reduce(hcat, [
@@ -1287,11 +1346,10 @@ function plot_ed_scan_res(
         end
     end
 
-    if save_plot && !isnothing(fig_path)
-        save(fig_path, fig)
-        @info "Saved plot to $fig_path"
-    else
-        error("No figure path specified. Please provide a valid path using the `fig_path` argument.")
+    if !isnothing(save_plot_path)
+        save(save_plot_path, fig)
+        @info "Saved plot to $save_plot_path"
     end
+
     return fig, ax
 end

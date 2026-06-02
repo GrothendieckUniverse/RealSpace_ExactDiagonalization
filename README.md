@@ -10,8 +10,10 @@ A high-performance, statistics-agnostic Julia implementation similar to the desi
 - [Design Innovations](#design-innovations)
 - [Architecture](#architecture)
 - [Theoretical Background](#theoretical-background)
+- [⚠️ Understanding `filling_fraction`](#⚠️-understanding-filling_fraction)
 - [Quick Start](#quick-start)
 - [Examples](#examples)
+- [Many-Body Topological Observables](#many-body-topological-observables)
 - [Benchmarks](#benchmarks)
 - [File Structure](#file-structure)
 - [Dependencies](#dependencies)
@@ -30,6 +32,8 @@ A high-performance, statistics-agnostic Julia implementation similar to the desi
 4. **Two computational modes, one CanonicalMap** — a *matrix mode* that precomputes sparse CSC matrices for fast Arpack diagonalization (memory-intensive but fast), and a *matrix-free mode* that computes $H|\psi\rangle$ on-the-fly via multithreaded Lanczos (near-zero memory overhead, ~1.5–3× slower per sector). Both modes share the same `CanonicalMap` cache for O(1) canonical-representative lookups, providing 3–10× speedup in matrix construction over raw O(|G|) canonicalization.
 
 5. **Unified boson/fermion treatment** — the entire pipeline is statistics-agnostic. Fermionic signs (permutation parity in symmetry actions and Jordan-Wigner strings in hopping) are injected via compile-time multiple dispatch on `Bosonic()` / `Fermionic()` singleton types, with zero runtime branching overhead.
+
+6. **Twisted boundary conditions & spectral flow** — `update_second_quantized_model_with_twisted_phases!` applies Peierls substitution via `TightBinding.generate_bilinear_terms`. For flux scans the orbit catalog is built once and its stabiliser phases are updated in-place via `update_orbit_stabilizer_phases!` — avoiding the expensive O(C(N,νN)) Gosper iteration at every flux point. The flux-aware translation group preserves ordinary momentum labels.
 
 ---
 
@@ -306,6 +310,106 @@ julia --project=. examples/fermion_hubbard_square.jl
 
 ---
 
+## Twisted-Boundary Observables
+
+The package includes built-in flux-scan observables for twisted-boundary spectral flow and fractional charge pumping. This mirrors the ExactDiagonalization.jl FCI showcase: thread flux through one periodic direction and diagonalize the low-energy many-body spectrum, while keeping the calculation in flux-aware symmetry sectors.
+
+### Flux-Aware Translation Symmetry
+
+The central innovation is the **flux-aware translation group**.  When a flux $\theta$ is inserted, the ordinary translation $T$ does _not_ commute with $H(\theta)$.  We therefore build a gauge-covariant translation $T^\theta$ whose per-site phases satisfy $g(x)/g(Tx)$ with $g(x)=e^{i2\pi\theta\cdot x/L}$.  $T^\theta$ commutes with $H(\theta)$ while keeping the **standard momentum labels** $[k_1,k_2]$ unchanged — the entire flux physics is captured in the per-site phases of the group operations.
+
+For a flux scan the orbit catalog is built **once** (at $\theta=0$) using [`build_ed_data`](@ref).  At each subsequent $\theta$ the catalog's stabiliser phases are updated in-place via [`update_orbit_stabilizer_phases!`](@ref), avoiding re-running the expensive Gosper enumeration at every flux point.
+
+```julia
+using RealSpace_ExactDiagonalization, TightBinding, CairoMakie
+
+# Build the bosonic Haldane FCI model (ν=1/2 per band)
+model = build_zero_flux_bosonic_fci_second_quantized_model(; sample_size=[2, 3])
+
+# Sector-resolved flux scan: track momentum sectors (0,0) and (1,0)
+result = flux_spectrum_flow(
+    model,
+    [(0, 0), (1, 0)];
+    filling_fraction=1//4,   # 3 bosons / 12 vertices
+    flux_direction=1,
+    twisted_phases_list=collect(range(0.0, 2.0; length=9)),
+    nev=3,
+    fig_path="figures/haldane_fci_flux_flow_sectors.svg",
+    checkpoint_path="checkpoints/haldane_fci_flux_flow_sectors.jld2",
+)
+
+# Or full Hilbert-space scan (identity group)
+result_full = flux_spectrum_flow(
+    model,
+    :identity;
+    filling_fraction=1//4,
+    twisted_phases_list=collect(range(0.0, 1.0; length=9)),
+    nev=3,
+    fig_path="figures/haldane_fci_flux_flow_identity.svg",
+)
+```
+
+### Fractional Charge Pump
+
+`flux_charge_pump` computes a one-dimensional flux-cylinder pump, not a two-dimensional many-body Chern number.  In 2D the default convention is Laughlin's: insert flux along `flux_direction` and measure the periodic many-body polarization in the transverse direction,
+
+$$
+\hat U_\perp=\exp\!\left(\frac{2\pi i}{L_\perp}\sum_j x_{j,\perp}\hat n_j\right).
+$$
+
+At fractional filling, a single momentum-sector expectation value of $\hat U_\perp$ can vanish or miss the topological multiplet.  The implementation therefore projects $\hat U_\perp$ into the requested low-energy manifold and unwraps the phases of its eigenvalues.  The stored `polarizations` keep these raw unwrapped phases, while `pumped_charge_trajectories` subtract each branch's initial phase so plots start from zero.  For the bosonic Haldane FCI on `[2,3]`, the two polarization branches each wind by $\Delta Q = 1/2$ over one inserted flux quantum.
+
+```julia
+model = build_zero_flux_bosonic_fci_second_quantized_model(; sample_size=[2, 3])
+
+pump = flux_charge_pump(
+    model,
+    default_fci_sectors([2, 3]);
+    filling_fraction=1//4,
+    flux_direction=1,        # θ_x flux
+    polarization_direction=2, # U_y polarization; this is the 2D default
+    twisted_phases_list=collect(range(0.0, 1.0; length=9)),
+    fig_path="figures/haldane_fci_charge_pump_sectors.svg",
+)
+
+pump.pumped_charges  # approximately [0.5, 0.5]
+```
+
+### Key Functions
+
+| Function | Description |
+|----------|------------|
+| `build_zero_flux_bosonic_fci_second_quantized_model(; sample_size, params)` | Construct the bosonic Haldane FCI model |
+| `default_fci_sectors(sample_size)` | Return the momentum sectors hosting the two FCI ground states |
+| `flux_spectrum_flow(model, labels; kwargs...)` | Scan E(θ) for given sector labels |
+| `flux_charge_pump(model, labels; kwargs...)` | Compute the one-dimensional fractional charge pump |
+| `many_body_position_phases(lattice, direction)` | Build the site phases for Resta's periodic position operator |
+| `update_orbit_stabilizer_phases!(catalog, group, stats)` | In-place stabiliser update for flux scans |
+| `build_translation_group(lattice, [θ])` | Build translation group, optionally with flux phases |
+| `update_second_quantized_model_with_twisted_phases!(model; twisted_phases_over_2π)` | In-place Peierls substitution to hopping terms |
+
+### Physics Background
+
+On a torus with $L_x \times L_y$ unit cells and $n_{\text{filled}}$ particles:
+
+- **Momentum shift**: In the boundary-gauged Hamiltonian the centre-of-mass momentum shifts by $2\pi\theta_x n_{\text{filled}}/L_x$.  Our gauge-covariant translation absorbs this shift into the group operations, keeping irrep labels fixed.
+- **Spectral flow**: The two nearly-degenerate FCI ground states intertwine under one flux quantum ($\theta=1$), each contributing $\Delta Q \approx 1/2$ to the Laughlin charge pump.  After two flux quanta ($\theta=2$) each GS returns to itself.
+- **Charge pump**: Threading flux in one torus direction pumps charge in the transverse direction.  The finite periodic diagnostic is the phase winding of projected Resta polarization eigenvalues, not the raw open-boundary centre of mass.
+- **Sector identity**: For $[2,3]$ ($L_x=2, n_{\text{filled}}=3$), the GS at $[0,0]$ swaps to $[1,0]$ after $\theta=1$ because $n_{\text{filled}} \bmod L_x = 1$.  For $[3,4]$ ($L_x=3, n_{\text{filled}}=6$), the GS stays in its sector because $n_{\text{filled}} \bmod L_x = 0$.
+
+### Test / Self-Check
+
+```julia
+# From within a Julia session:
+using RealSpace_ExactDiagonalization
+test_bosonic_fci_flux_flow(; sample_size=[2,3], twisted_phases_list=collect(range(0.0,2.0;length=9)), mode=:sectors)
+test_bosonic_fci_charge_pump(; sample_size=[2,3], twisted_phases_list=collect(range(0.0,1.0;length=9)), mode=:sectors)
+```
+
+The spectrum-flow tests verify that the two FCI ground states exchange after one flux quantum and return after two.  The charge-pump test directly verifies the projected polarization winding $\Delta Q \approx 1/2$ for both branches.
+
+---
+
 ## Benchmarks
 
 ### Comprehensive Multi-Model Benchmark
@@ -364,17 +468,21 @@ RealSpace_ExactDiagonalization/
 │   ├── bitwise_operations.jl              Bitmask primitives (submodule)
 │   ├── second_quantized_model.jl          Model data structures
 │   ├── symmetry_resolved_ed.jl            Core ED engine
-│   └── test.jl                            Model builders & test utilities
+│   └── flux_utilities.jl                  Twisted-boundary-condition model builder
+├── observables/
+│   ├── spectrum_flow.jl                   Twisted-boundary spectrum-flow scan
+│   └── charge_pump.jl                     Fractional charge-pump observable
 ├── doc/
-│   └── design.ipynb                       Complete design documentation (theory & code)
+│   ├── design.ipynb                       Complete design documentation (theory & code)
+│   └── charge_pump.md                     Flux-cylinder charge-pump notes
 ├── benchmark/
 │   ├── benchmark.jl                       Comprehensive multi-model benchmark
 │   ├── plot_benchmark.jl                  Plotting from CSV results
 │   ├── xdiag_compare.jl                   XDiag comparison benchmark
-│   ├── results/                           Generated CSV timing files
+│   ├── benchmark_data/                    Generated CSV timing files
 │   └── figures/                           Generated CairoMakie SVG plots
-├── test/
-│   └── runtests.jl                        Sanity checks
+├── checkpoints/                           Serialized ED data (JLD2)
+├── figures/                               Output plots
 ├── Project.toml
 └── README.md
 ```

@@ -16,7 +16,7 @@ Struct `Real_Space_Second_Quantized_Model <: Second_Quantized_Model` for Short-R
     - `bilinear_terms::Vector{Tuple{Int,Int,T}}`: the bilinear terms in the Hamiltonian, each of which is a tuple `(i, j, t)`, representing `t * a†_i a_j` where `a` denotes canonical creation/annihilation operators for either bosons or fermions.
     - `density_density_terms::Vector{Tuple{Int,Int,T}}`: the density-density interaction terms, each of which is a tuple `(i, j, v)`, representing `v * n_i * n_j`.
 """
-struct Real_Space_Second_Quantized_Model{T} <: Second_Quantized_Model
+mutable struct Real_Space_Second_Quantized_Model{T} <: Second_Quantized_Model
     params::Dict
     lattice::TightBinding.Real_Space_Lattice
     tb_model::TightBinding.Real_Space_TightBinding_Model
@@ -26,4 +26,28 @@ struct Real_Space_Second_Quantized_Model{T} <: Second_Quantized_Model
 end
 
 
+"""
+    update_second_quantized_model_with_twisted_phases!(model; twisted_phases_over_2π)
 
+In-place update of the bilinear hopping terms with twisted boundary phases.
+Delegates to `TightBinding.generate_bilinear_terms` which applies the Peierls
+phase `exp(i·2π·θ_d·w_d)` to every hopping crossing a periodic boundary.
+
+The model's `bilinear_terms` field is replaced; `params[\"twisted_phase_over_2π\"]`
+is updated.  Density-density terms and all other fields are unchanged.
+"""
+function update_second_quantized_model_with_twisted_phases!(
+    second_quantized_model::Real_Space_Second_Quantized_Model;
+    twisted_phases_over_2π::Vector{Float64},
+)::Real_Space_Second_Quantized_Model
+    lattice = second_quantized_model.lattice
+    length(twisted_phases_over_2π) == lattice.dim || error("twisted_phases_over_2π must have length $(lattice.dim).")
+
+    second_quantized_model.bilinear_terms = TightBinding.generate_bilinear_terms(
+        second_quantized_model.tb_model;
+        twisted_phases_over_2π=twisted_phases_over_2π,
+    )
+    second_quantized_model.lattice.twisted_phases_over_2π = twisted_phases_over_2π
+
+    return second_quantized_model
+end
