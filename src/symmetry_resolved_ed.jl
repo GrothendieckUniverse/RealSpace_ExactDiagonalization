@@ -120,7 +120,7 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 """
-    apply_operation_to_mask(m, op, statistics) -> (new_mask, phase)
+    apply_operation_to_mask(m, op, particle_statistics) -> (new_mask, phase)
 
 Apply g ∈ G to a Fock state.
 
@@ -160,10 +160,10 @@ end
     return new_mask, phase * parity
 end
 
-"Convenience 2-argument wrapper matching the legacy `apply_operation_to_mask` API (defaults to Bosonic statistics)."
-@inline function apply_operation_to_mask(m::Mask, op::Symmetry_Operation)::Tuple{Mask,ComplexF64}
-    return apply_operation_to_mask(m, op, Bosonic())
-end
+# "Convenience 2-argument wrapper matching the legacy `apply_operation_to_mask` API (defaults to Bosonic statistics)."
+# @inline function apply_operation_to_mask(m::Mask, op::Symmetry_Operation)::Tuple{Mask,ComplexF64}
+#     return apply_operation_to_mask(m, op, Bosonic())
+# end
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. Canonical representative (O(|G|) — used only during precomputation)
@@ -212,7 +212,7 @@ mutable struct Symmetry_Orbit_Catalog
 end
 
 """
-    update_orbit_stabilizer_phases!(catalog, new_group, statistics)
+    update_orbit_stabilizer_phases!(catalog, new_group, particle_statistics)
 
 In-place update of the stabilizer phases when the symmetry group is replaced by
 a gauge-covariant (e.g. flux-aware) copy.  The orbit *partition* (representative
@@ -221,7 +221,7 @@ of the operations, which is unchanged, so only the accumulated U(1) phases need
 recomputation.  This avoids re-running Gosper's hack at every flux point.
 """
 function update_orbit_stabilizer_phases!(catalog::Symmetry_Orbit_Catalog,
-    new_group::Finite_Symmetry_Group, statistics::Particle_Statistics)
+    new_group::Finite_Symmetry_Group, particle_statistics::Particle_Statistics)
     catalog.symmetry_group == new_group && return catalog  # no-op
     catalog.symmetry_group = new_group
     @inbounds for orbit_idx in eachindex(catalog.representative_mask_list)
@@ -230,7 +230,7 @@ function update_orbit_stabilizer_phases!(catalog::Symmetry_Orbit_Catalog,
         for (j, gidx) in enumerate(gidxs)
             _, α = apply_operation_to_mask(
                 catalog.representative_mask_list[orbit_idx],
-                new_group.operations[gidx], statistics)
+                new_group.operations[gidx], particle_statistics)
             phases[j] = α
         end
     end
@@ -241,7 +241,7 @@ function build_symmetry_orbit_catalog(;
     second_quantized_model::Second_Quantized_Model,
     n_filled::Int,
     symmetry_group::Finite_Symmetry_Group,
-    statistics::Particle_Statistics,
+    particle_statistics::Particle_Statistics,
 )::Symmetry_Orbit_Catalog
     n_site = symmetry_group.n_site
     @assert n_site == second_quantized_model.lattice.n_site
@@ -275,7 +275,7 @@ function build_symmetry_orbit_catalog(;
             gidx_stab = Int[]
             phase_stab = ComplexF64[]
             @inbounds for gidx in 1:nG
-                shifted, α = apply_operation_to_mask(m, symmetry_group.operations[gidx], statistics)
+                shifted, α = apply_operation_to_mask(m, symmetry_group.operations[gidx], particle_statistics)
                 shifted == m || continue
                 push!(gidx_stab, gidx)
                 push!(phase_stab, α)
@@ -296,7 +296,7 @@ function build_symmetry_orbit_catalog(;
 
                 min_mask = typemax(Mask)
                 @inbounds for gidx in 1:nG
-                    shifted, α = apply_operation_to_mask(m, symmetry_group.operations[gidx], statistics)
+                    shifted, α = apply_operation_to_mask(m, symmetry_group.operations[gidx], particle_statistics)
                     orbit_masks[gidx] = shifted
                     orbit_amps[gidx] = α
                     shifted < min_mask && (min_mask = shifted)
@@ -422,14 +422,14 @@ to avoid repeated O(|G|) canonicalization of the same scattered masks.
 """
 struct CanonicalMap
     symmetry_group::Finite_Symmetry_Group
-    statistics::Particle_Statistics
+    particle_statistics::Particle_Statistics
     cache::Dict{Mask,Tuple{Mask,Int,ComplexF64}}   # scattered mask → canonical data
 end
 
 "O(1) canonical-representative lookup (falls back to O(|G|) on cache miss)"
 @inline function get_canonical(cmap::CanonicalMap, m::Mask)::Tuple{Mask,Int,ComplexF64}
     return get!(cmap.cache, m) do
-        get_canonical_representative(m, cmap.symmetry_group, cmap.statistics)
+        get_canonical_representative(m, cmap.symmetry_group, cmap.particle_statistics)
     end
 end
 
@@ -596,7 +596,7 @@ function apply_hamiltonian!(y::Vector{ComplexF64}, x::Vector{ComplexF64},
 
                 row, coeff = proj
                 stab_row = basis.stabilizer_order_list[row]
-                hop_phase = hopping_phase_for_stats(cmap.statistics, repr_mask, i_from, i_to)
+                hop_phase = hopping_phase_for_stats(cmap.particle_statistics, repr_mask, i_from, i_to)
                 # H_{row,col} = t × coeff × √(|Stab(row)| / |Stab(col)|)
                 H_elem = t * hop_phase * coeff * sqrt(stab_row) * inv_sqrt_stab_col
                 yt[row] += H_elem * x_col
@@ -679,7 +679,7 @@ function build_ed_Hamiltonian_symmetry_block(
                     proj === nothing && continue
                     row, coeff = proj
                     stab_row = basis.stabilizer_order_list[row]
-                    hop_phase = hopping_phase_for_stats(cmap.statistics, repr_mask, i_from, i_to)
+                    hop_phase = hopping_phase_for_stats(cmap.particle_statistics, repr_mask, i_from, i_to)
                     H_elem = t * hop_phase * coeff * sqrt(stab_row / stab_col)
                     push!(Is, row)
                     push!(Js, col)
@@ -800,12 +800,12 @@ function ed_scan_at_irrep_matrix!(irrep_label, ed_data::Symmetry_Resolved_ED_Dat
     @assert irrep_idx !== nothing
 
     irrep = ed_data.irrep_list[irrep_idx]
-    statistics = ed_data.second_quantized_model.statistics
+    particle_statistics = ed_data.second_quantized_model.particle_statistics
     basis = build_symmetry_sector_basis(ed_data.orbit_catalog, irrep)
     ed_data.sector_dims[irrep_idx] = length(basis.representative_mask_list)
 
     # ── Create CanonicalMap (shared across all matrix-construction paths) ──
-    cmap = CanonicalMap(ed_data.symmetry_group, statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
+    cmap = CanonicalMap(ed_data.symmetry_group, particle_statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
 
     # Use distributed construction when workers are available (HPC)
     if nprocs() > 1 && ed_data.sector_dims[irrep_idx] > 500
@@ -832,7 +832,7 @@ function ed_scan_at_irrep_matrixfree!(irrep_label, ed_data::Symmetry_Resolved_ED
     @assert irrep_idx !== nothing
 
     irrep = ed_data.irrep_list[irrep_idx]
-    statistics = ed_data.second_quantized_model.statistics
+    particle_statistics = ed_data.second_quantized_model.particle_statistics
     basis = build_symmetry_sector_basis(ed_data.orbit_catalog, irrep)
     sector_dim = length(basis.representative_mask_list)
     ed_data.sector_dims[irrep_idx] = sector_dim
@@ -849,7 +849,7 @@ function ed_scan_at_irrep_matrixfree!(irrep_label, ed_data::Symmetry_Resolved_ED
 
     res = @timed begin
         # Build and populate CanonicalMap
-        cmap = CanonicalMap(ed_data.symmetry_group, statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
+        cmap = CanonicalMap(ed_data.symmetry_group, particle_statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
         populate_canonical_map!(cmap, basis, bilinear)
 
         # Create the linear operator. The distributed variant avoids @everywhere;
@@ -932,7 +932,7 @@ function build_ed_Hamiltonian_symmetry_block_distributed(
                         proj === nothing && continue
                         row, coeff = proj
                         stab_row = basis.stabilizer_order_list[row]
-                        hop_phase = hopping_phase_for_stats(cmap.statistics, repr_mask, i_from, i_to)
+                        hop_phase = hopping_phase_for_stats(cmap.particle_statistics, repr_mask, i_from, i_to)
                         H_elem = t * hop_phase * coeff * sqrt(stab_row / stab_col)
                         push!(Is, row)
                         push!(Js, col)
@@ -1011,7 +1011,7 @@ function apply_hamiltonian_distributed!(y::Vector{ComplexF64}, x::Vector{Complex
                     proj === nothing && continue
                     row, coeff = proj
                     stab_row = basis.stabilizer_order_list[row]
-                    hop_phase = hopping_phase_for_stats(cmap.statistics, repr_mask, i_from, i_to)
+                    hop_phase = hopping_phase_for_stats(cmap.particle_statistics, repr_mask, i_from, i_to)
                     H_elem = t * hop_phase * coeff * sqrt(stab_row) * inv_sqrt_stab_col
                     y_part[row] += H_elem * x_col
                 end
@@ -1317,7 +1317,7 @@ function build_ed_data(second_quantized_model::Real_Space_Second_Quantized_Model
     @assert denominator(filling_fraction) * n_filled == numerator(filling_fraction) * n_site
 
     irrep_list = build_irrep_list(symmetry_group, second_quantized_model.lattice)
-    catalog = build_symmetry_orbit_catalog(; second_quantized_model=second_quantized_model, n_filled=n_filled, symmetry_group=symmetry_group, statistics=second_quantized_model.statistics)
+    catalog = build_symmetry_orbit_catalog(; second_quantized_model=second_quantized_model, n_filled=n_filled, symmetry_group=symmetry_group, particle_statistics=second_quantized_model.particle_statistics)
     sector_dims = zeros(Int, length(irrep_list))
     ed_scan_res = Dict{Int,Tuple{Vector{Float64},Matrix{ComplexF64}}}()
 

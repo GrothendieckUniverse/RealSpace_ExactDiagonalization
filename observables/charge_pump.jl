@@ -48,7 +48,7 @@ function _position_operator_matrix(
     basis_to::Symmetry_Sector_Basis,
     basis_from::Symmetry_Sector_Basis,
     site_phases::Vector{ComplexF64},
-    statistics::Particle_Statistics,
+    particle_statistics::Particle_Statistics,
 )::SparseMatrixCSC{ComplexF64,Int}
     G = basis_from.symmetry_group
     @assert basis_to.symmetry_group.name == G.name
@@ -74,7 +74,7 @@ function _position_operator_matrix(
 
         elem = zero(ComplexF64)
         for (gidx, op) in enumerate(G.operations)
-            shifted, _ = apply_operation_to_mask(repr, op, statistics)
+            shifted, _ = apply_operation_to_mask(repr, op, particle_statistics)
             elem += χ_to[gidx] * conj(χ_from[gidx]) *
                     _position_phase_for_mask(shifted, site_phases)
         end
@@ -260,7 +260,7 @@ function flux_charge_pump(
                 basis_from = bases[label_from]
                 vecs_from = eigvecs[label_from]
                 Ublock = _position_operator_matrix(
-                    basis_to, basis_from, site_phases, model.statistics,
+                    basis_to, basis_from, site_phases, model.particle_statistics,
                 )
                 for lev_to in 1:size(vecs_to, 2), lev_from in 1:size(vecs_from, 2)
                     row = (ito_label - 1) * nev_per_sector + lev_to

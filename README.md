@@ -45,7 +45,7 @@ A high-performance, statistics-agnostic Julia implementation similar to the desi
                            │  · lattice geometry                  │
                            │  · bilinear terms  (a†_i a_j)        │
                            │  · density terms   (n_i n_j)         │
-                           │  · statistics      (Bosonic/Fermionic)│
+                           │  · particle_statistics      (Bosonic/Fermionic)│
                            └──────────────┬───────────────────────┘
                                           │
               ┌───────────────────────────┼───────────────────────────┐

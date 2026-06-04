@@ -291,13 +291,13 @@ function bench_ours_one(ss::Vector{Int}; mode::Symbol=:matrix)
         t0 = time()
 
         if mode == :matrix
-            cmap = CanonicalMap(symmetry_group, model.statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
+            cmap = CanonicalMap(symmetry_group, model.particle_statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
             H = build_ed_Hamiltonian_symmetry_block(basis, model.bilinear_terms,
                 model.density_density_terms, cmap)
             vals, _ = diagonalize_block_arpack(H; nev=NEV)
             H = nothing
         else
-            cmap = CanonicalMap(symmetry_group, model.statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
+            cmap = CanonicalMap(symmetry_group, model.particle_statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
             populate_canonical_map!(cmap, basis, model.bilinear_terms)
             H_op, n = hamiltonian_linear_operator(basis, model.bilinear_terms,
                 model.density_density_terms, cmap)

@@ -47,16 +47,15 @@ function build_fermionic_checkerboard_tb_model(;
     )
     tb_model = TightBinding.initialize_real_space_tightbinding_model(r_data; model_name="checkerboard")
 
-    p = deepcopy(params)
     if flip_bands
-        p["t"] = -p["t"]
-        p["t′_1"] = -p["t′_1"]
-        p["t′_2"] = -p["t′_2"]
-        p["t′′"] = -p["t′′"]
+        params["t"] = -params["t"]
+        params["t′_1"] = -params["t′_1"]
+        params["t′_2"] = -params["t′_2"]
+        params["t′′"] = -params["t′′"]
     end
 
-    t, t′_1, t′_2, t′′ = p["t"], p["t′_1"], p["t′_2"], p["t′′"]
-    ϕ = 2π * p["ϕ_over_2π"]
+    t, t′_1, t′_2, t′′ = params["t"], params["t′_1"], params["t′_2"], params["t′′"]
+    ϕ = 2π * params["ϕ_over_2π"]
 
     # NN hoppings (inter-sublattice, complex — staggered flux)
     add_hopping_term!(tb_model, (([0, 0], 1), ([0, 0], 2)) => -t * exp(-im * ϕ); is_hermitian=true)
@@ -76,7 +75,7 @@ function build_fermionic_checkerboard_tb_model(;
     add_hopping_term!(tb_model, (([1, 0], 2), ([0, 1], 2)) => -t′′; is_hermitian=true)
     add_hopping_term!(tb_model, (([0, 1], 1), ([1, 0], 1)) => -t′′; is_hermitian=true)
 
-    @info "Checkerboard TB model: $(sample_size[1])×$(sample_size[2]), $(tb_model.lattice.n_site) sites"
+    @info "Checkerboard TB model: $(sample_size) unit cells × $(r_data.n_sub) sublattices = $(r_data.n_site) sites"
     return tb_model
 end
 
