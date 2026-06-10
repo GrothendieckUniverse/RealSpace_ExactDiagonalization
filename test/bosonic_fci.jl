@@ -63,6 +63,43 @@ function build_zero_flux_bosonic_fci_second_quantized_model(;
     bilinear_terms = TightBinding.generate_bilinear_terms(tb_model; twisted_phases_over_2π=zeros(Float64, lattice.dim))
     density_terms = Vector{Tuple{Int,Int,ComplexF64}}()
 
+    added_density_pairs = Set{Tuple{Int,Int}}()
+    function add_density_pair!(i::Int, j::Int, V::Number)
+        i == j && return nothing
+        pair = minmax(i, j)
+        pair in added_density_pairs && return nothing
+        push!(added_density_pairs, pair)
+        push!(density_terms, (pair[1], pair[2], ComplexF64(V)))
+        return nothing
+    end
+
+    # NN density-density interaction: same three inter-sublattice bonds as the
+    # nearest-neighbour hopping geometry, counted once as unordered pairs.
+    if V1 != 0.0
+        for (cell, isub) in lattice.site_list
+            isub == 1 || continue
+            i = lattice.site_to_index_map[(cell, 1)]
+            for shift in ([0, 0], [0, -1], [-1, 0])
+                cell_to = mod.(cell .+ shift, lattice.sample_size)
+                j = lattice.site_to_index_map[(cell_to, 2)]
+                add_density_pair!(i, j, V1)
+            end
+        end
+    end
+
+    # NNN density-density interaction: same three intra-sublattice directions as
+    # the Haldane NNN hopping geometry, counted once as unordered pairs.
+    if V2 != 0.0
+        for (cell, isub) in lattice.site_list
+            for shift in ([1, 0], [0, 1], [-1, 1])
+                cell_to = mod.(cell .+ shift, lattice.sample_size)
+                j = lattice.site_to_index_map[(cell_to, isub)]
+                i = lattice.site_to_index_map[(cell, isub)]
+                add_density_pair!(i, j, V2)
+            end
+        end
+    end
+
     model = Real_Space_Second_Quantized_Model(
         params,
         lattice,
@@ -134,7 +171,7 @@ function test_bosonic_fci_spectrum_flow(;
         filling_fraction=filling_fraction,
         flux_direction=flux_direction,
         twisted_phases_over_2π_list=twisted_phases_over_2π_list,
-        nev=3,
+        nev=5,
         fig_path=joinpath(PROJECT_ROOT, "figures",
             "bosonic_FCI_spectrum_flow_$(tag)_$(sample_size).svg"),
         checkpoint_dir=joinpath(PROJECT_ROOT, "checkpoints"),
@@ -212,4 +249,90 @@ function test_bosonic_fci_charge_pump(;
     end
 
     return result
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Self-contained tests: ODLRO (off-diagonal long-range order) for superfluid phases
+# ═══════════════════════════════════════════════════════════════════════════
+
+function _odlro_peak(kx::Vector{Float64}, ky::Vector{Float64}, odlro_map::Matrix{Float64})
+    idx = argmax(odlro_map)
+    ix, iy = Tuple(idx)
+    return (kx[ix], ky[iy], odlro_map[idx])
+end
+
+"""
+Unified ODLRO demo for the bosonic Haldane honeycomb model
+---
+Computes the momentum-space one-body density matrix diagnostic `ρ(k)` for
+three representative points:
+
+- `t′′ = -0.8`: superfluid near M
+- `t′′ = -0.58`: bosonic FCI
+- `t′′ = -0.2`: superfluid near Γ
+
+The three maps are saved in a single figure with a unified color scale and
+first-BZ boundary overlays.
+"""
+function test_bosonic_fci_odlro_demo(;
+    sample_size::Vector{Int}=[2, 3],
+    filling_fraction::Rational{Int}=1 // 2,
+    k_resolution::Int=61,
+)
+    filling_fraction_vertex = filling_fraction // 2
+    cases = [
+        (label="SF@M", tpp=-0.8),
+        (label="FCI", tpp=-0.58),
+        (label="SF@Γ", tpp=-0.2),
+    ]
+
+    maps = NamedTuple[]
+    peaks = NamedTuple[]
+
+    @testset "Bosonic ODLRO phase demo ($(sample_size))" begin
+        for case in cases
+            params = deepcopy(params_DNSheng)
+            params["t′′"] = case.tpp
+            model = build_zero_flux_bosonic_fci_second_quantized_model(;
+                sample_size=sample_size, params=params)
+
+            kx, ky, odlro_map = compute_odlro_map(
+                model, (0, 0);
+                target_eigval_idx=1,
+                filling_fraction=filling_fraction_vertex,
+                k_resolution=k_resolution,
+            )
+
+            @test length(kx) == k_resolution
+            @test length(ky) == k_resolution
+            @test size(odlro_map) == (k_resolution, k_resolution)
+            @test all(isfinite, odlro_map)
+            @test all(x -> x >= -1e-10, odlro_map)
+
+            peak = _odlro_peak(kx, ky, odlro_map)
+            push!(peaks, (label=case.label, tpp=case.tpp, kx=peak[1], ky=peak[2], rho=peak[3]))
+            push!(maps, (
+                kx=kx,
+                ky=ky,
+                values=odlro_map,
+                lattice=model.lattice,
+                title="$(case.label), t''=$(case.tpp)",
+            ))
+        end
+
+        gamma_peak = peaks[end]
+        @test abs(gamma_peak.kx) <= abs(maps[end].kx[2] - maps[end].kx[1])
+        @test abs(gamma_peak.ky) <= abs(maps[end].ky[2] - maps[end].ky[1])
+
+        fig_path = joinpath(dirname(@__DIR__), "figures", "bosonic_FCI_ODLRO_$(sample_size).svg")
+        plot_odlro_map_panels(
+            maps;
+            fig_path=fig_path,
+            title="Bosonic Haldane ODLRO: SF@M → FCI → SF@Γ",
+        )
+        @info "  Saved unified ODLRO demo figure: $fig_path"
+        @info "  ODLRO peaks = $peaks"
+    end
+
+    return nothing
 end
