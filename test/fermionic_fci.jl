@@ -38,6 +38,7 @@ function build_fermionic_checkerboard_tb_model(;
     params::Dict{String,<:Number}=params_Sun_Gu_Katsura_Sarma,
     flip_bands::Bool=true,
 )::TightBinding.Real_Space_TightBinding_Model
+    p = deepcopy(params)
     r_data = TightBinding.initialize_real_space_lattice(;
         lattice_name="checkerboard",
         sample_size=sample_size,
@@ -48,14 +49,14 @@ function build_fermionic_checkerboard_tb_model(;
     tb_model = TightBinding.initialize_real_space_tightbinding_model(r_data; model_name="checkerboard")
 
     if flip_bands
-        params["t"] = -params["t"]
-        params["t′_1"] = -params["t′_1"]
-        params["t′_2"] = -params["t′_2"]
-        params["t′′"] = -params["t′′"]
+        p["t"] = -p["t"]
+        p["t′_1"] = -p["t′_1"]
+        p["t′_2"] = -p["t′_2"]
+        p["t′′"] = -p["t′′"]
     end
 
-    t, t′_1, t′_2, t′′ = params["t"], params["t′_1"], params["t′_2"], params["t′′"]
-    ϕ = 2π * params["ϕ_over_2π"]
+    t, t′_1, t′_2, t′′ = p["t"], p["t′_1"], p["t′_2"], p["t′′"]
+    ϕ = 2π * p["ϕ_over_2π"]
 
     # NN hoppings (inter-sublattice, complex — staggered flux)
     add_hopping_term!(tb_model, (([0, 0], 1), ([0, 0], 2)) => -t * exp(-im * ϕ); is_hermitian=true)
@@ -296,7 +297,7 @@ function test_fermionic_fci_spectrum_flow(;
         filling_fraction=filling_fraction,
         flux_direction=flux_direction,
         twisted_phases_over_2π_list=twisted_phases_over_2π_list,
-        nev=3,
+        nev=5,
         fig_path=joinpath(PROJECT_ROOT, "figures",
             "fermionic_FCI_spectrum_flow_$(tag)_$(sample_size).svg"),
         checkpoint_dir=joinpath(PROJECT_ROOT, "checkpoints"),
@@ -378,3 +379,12 @@ function test_fermionic_fci_charge_pump(;
 
     return result
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Note: real-space occupation distribution tests have been removed.
+# For translation-invariant PBC systems, ⟨n_i⟩ in a single symmetry sector
+# is identically uniform regardless of the phase.  To diagnose charge order
+# or superfluidity, use:
+#   - `test_bosonic_fci_sf_M` / `test_bosonic_fci_sf_Gamma` (bosonic ODLRO)
+#   - `static_structure_factor` for connected S(q)
+# ═══════════════════════════════════════════════════════════════════════════

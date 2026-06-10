@@ -192,7 +192,7 @@ function test_fermion_fci_checkboard(;
     # Optional: plot spectrum
     print_spectrum(ed_data; shift_to_zero=true)
     fig, ax = plot_spectrum(ed_data; shift_to_zero=true)
-    save(joinpath(@__DIR__, "..", "figures", "fermion_fci_checkerboard_ED_spec_$(sample_size)_ν=$(numerator(filling_fraction_per_band))_$(denominator(filling_fraction_per_band)).svg"), fig)
+    save(joinpath(@__DIR__, "..", "figures", "fermion_FCI_checkerboard_ED_spec_$(sample_size)_ν=$(numerator(filling_fraction_per_band))_$(denominator(filling_fraction_per_band)).svg"), fig)
 
     println("\nDone.")
 end
