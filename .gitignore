@@ -2,3 +2,6 @@
 
 checkpoints/
 figures/
+
+reasonix.toml
+.codegraph
