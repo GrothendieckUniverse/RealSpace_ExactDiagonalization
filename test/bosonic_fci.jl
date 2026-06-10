@@ -336,3 +336,76 @@ function test_bosonic_fci_odlro_demo(;
 
     return nothing
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Self-contained test: static structure factor S(q)
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+Unified static structure factor demo for the bosonic Haldane honeycomb model
+---
+Computes the connected static structure factor `S(q)` for three representative
+points:
+
+- `t′′ = -0.8`: superfluid near M
+- `t′′ = -0.58`: bosonic FCI
+- `t′′ = -0.2`: superfluid near Γ
+
+A CDW/Wigner crystal would show sharp Bragg peaks at the ordering wavevector;
+an FCI or superfluid shows a smooth, featureless S(q).  The three maps are
+saved in a single figure with a unified color scale and first-BZ boundary
+overlays.
+"""
+function test_bosonic_fci_static_structure_factor_demo(;
+    sample_size::Vector{Int}=[2, 3],
+    filling_fraction::Rational{Int}=1 // 2,
+    k_resolution::Int=61,
+)
+    filling_fraction_vertex = filling_fraction // 2
+    cases = [
+        (label="SF@M", tpp=-0.8),
+        (label="FCI", tpp=-0.58),
+        (label="SF@Γ", tpp=-0.2),
+    ]
+
+    maps = NamedTuple[]
+
+    @testset "Bosonic static structure factor demo ($(sample_size))" begin
+        for case in cases
+            params = deepcopy(params_DNSheng)
+            params["t′′"] = case.tpp
+            model = build_zero_flux_bosonic_fci_second_quantized_model(;
+                sample_size=sample_size, params=params)
+
+            kx, ky, S_map = compute_structure_factor_map(
+                model, (0, 0);
+                target_eigval_idx=1,
+                filling_fraction=filling_fraction_vertex,
+                k_resolution=k_resolution,
+            )
+
+            @test length(kx) == k_resolution
+            @test length(ky) == k_resolution
+            @test size(S_map) == (k_resolution, k_resolution)
+            @test all(isfinite, S_map)
+
+            push!(maps, (
+                kx=kx,
+                ky=ky,
+                values=S_map,
+                lattice=model.lattice,
+                title="$(case.label), t''=$(case.tpp)",
+            ))
+        end
+
+        fig_path = joinpath(dirname(@__DIR__), "figures", "bosonic_FCI_structure_factor_$(sample_size).svg")
+        plot_structure_factor_map_panels(
+            maps;
+            fig_path=fig_path,
+            title="Bosonic Haldane S(q): SF@M → FCI → SF@Γ",
+        )
+        @info "  Saved unified structure factor demo figure: $fig_path"
+    end
+
+    return nothing
+end

@@ -250,7 +250,7 @@ function _bootstrap_ed_sector(
                   [Tuple{Int,Int}(sector_label)]
 
         ed_scan!(ed_data; nev=max(target_eigval_idx, 2), mode=ed_mode,
-                 scanned_sectors=scanned)
+            scanned_sectors=scanned)
     end
 
     # ── Resolve sector ──
@@ -442,6 +442,44 @@ function plot_structure_factor_map(
     hm = heatmap!(ax, kx, ky, S_map; colormap=:viridis)
     _draw_bz_boundary!(ax, model.lattice)
     Colorbar(fig[1, 2], hm; label="S(q)")
+
+    if fig_path !== nothing
+        mkpath(dirname(fig_path))
+        save(fig_path, fig)
+    end
+    return fig
+end
+
+"""
+    plot_structure_factor_map_panels(maps; fig_path=nothing, title="Connected static structure factor S(q)")
+
+Plot several precomputed static structure-factor maps in one row with a unified
+color scale and first-BZ boundary overlays.
+
+Each entry of `maps` is a named tuple with fields:
+`kx`, `ky`, `values`, `lattice`, and `title`.
+"""
+function plot_structure_factor_map_panels(
+    maps::AbstractVector;
+    fig_path::Union{Nothing,String}=nothing,
+    title::String="Connected static structure factor S(q)",
+)
+    isempty(maps) && error("maps must not be empty.")
+
+    vmin = minimum(minimum(m.values) for m in maps)
+    vmax = maximum(maximum(m.values) for m in maps)
+
+    fig = Figure(size=(420 * length(maps) + 110, 420))
+    hm_ref = nothing
+    for (idx, m) in enumerate(maps)
+        ax = Axis(fig[1, idx]; xlabel="k_x", ylabel="k_y", title=m.title, aspect=DataAspect())
+        hm = heatmap!(ax, m.kx, m.ky, m.values;
+            colormap=:viridis, colorrange=(vmin, vmax))
+        _draw_bz_boundary!(ax, m.lattice)
+        hm_ref === nothing && (hm_ref = hm)
+    end
+    Label(fig[0, 1:length(maps)], title; fontsize=18)
+    Colorbar(fig[1, length(maps)+1], hm_ref; label="S(q)")
 
     if fig_path !== nothing
         mkpath(dirname(fig_path))
