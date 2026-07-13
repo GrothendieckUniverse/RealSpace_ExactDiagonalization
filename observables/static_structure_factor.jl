@@ -221,6 +221,28 @@ function _draw_bz_boundary!(ax, lattice::TightBinding.Real_Space_Lattice)
     return ax
 end
 
+function _fold_momentum_to_first_bz(q::Vector{Float64}, lattice::TightBinding.Real_Space_Lattice)
+    lattice.dim == 2 || return q
+    b1, b2 = _reciprocal_basis_vectors(lattice)
+    best = copy(q)
+    best_norm = dot(best, best)
+
+    for n1 in -2:2, n2 in -2:2
+        folded = q .- n1 .* b1 .- n2 .* b2
+        folded_norm = dot(folded, folded)
+        if folded_norm < best_norm
+            best = folded
+            best_norm = folded_norm
+        end
+    end
+    return best
+end
+
+function _fold_momenta_to_first_bz(q_points::Vector{Vector{Float64}},
+    lattice::TightBinding.Real_Space_Lattice)
+    return [_fold_momentum_to_first_bz(Float64.(q), lattice) for q in q_points]
+end
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Shared ED bootstrap (build / resolve sector / return eigenvector & basis)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -342,6 +364,43 @@ function static_structure_factor(
     return kgrid.site_cart_list, S_q
 end
 
+"""
+    structure_factor_allowed_momenta(model, sector_label; kwargs...)
+        -> (qx::Vector{Float64}, qy::Vector{Float64}, S_q::Vector{Float64})
+
+Compute the connected static structure factor only on the finite torus allowed
+momenta and fold those momenta into the first Brillouin zone.  Keyword
+arguments are forwarded to [`static_structure_factor`](@ref).
+"""
+function structure_factor_allowed_momenta(
+    model::Real_Space_Second_Quantized_Model,
+    sector_label;
+    target_eigval_idx::Int=1,
+    filling_fraction::Rational{Int},
+    flavor_a::Function=i -> true,
+    flavor_b::Function=i -> true,
+    ed_mode::Symbol=:matrix,
+    ed_data::Union{Symmetry_Resolved_ED_Data,Nothing}=nothing,
+    fold_to_first_bz::Bool=true,
+)::Tuple{Vector{Float64},Vector{Float64},Vector{Float64}}
+    q_points, S_q = static_structure_factor(
+        model, sector_label;
+        target_eigval_idx=target_eigval_idx,
+        filling_fraction=filling_fraction,
+        flavor_a=flavor_a,
+        flavor_b=flavor_b,
+        ed_mode=ed_mode,
+        ed_data=ed_data,
+    )
+
+    plot_points = fold_to_first_bz ?
+                  _fold_momenta_to_first_bz(q_points, model.lattice) :
+                  q_points
+    qx = [q[1] for q in plot_points]
+    qy = [q[2] for q in plot_points]
+    return qx, qy, S_q
+end
+
 # ═══════════════════════════════════════════════════════════════════════════
 # BZ heatmap: S(q) on a dense k-grid
 # ═══════════════════════════════════════════════════════════════════════════
@@ -451,6 +510,64 @@ function plot_structure_factor_map(
 end
 
 """
+    plot_structure_factor_allowed_momenta(model, sector_label; kwargs...) -> Figure
+
+Compute and plot the connected static structure factor only at the finite-size
+allowed momenta of the torus.  By default, momenta are folded into the first
+Brillouin zone and shown as a scatter plot over the first-BZ boundary.  Keyword
+arguments are forwarded to [`structure_factor_allowed_momenta`](@ref), with
+additional plotting keywords:
+
+- `fig_path::Union{Nothing,String}=nothing`
+- `title::String="Allowed-momentum S(q)"`
+- `markersize::Real=24`
+- `colorrange=nothing`
+"""
+function plot_structure_factor_allowed_momenta(
+    model::Real_Space_Second_Quantized_Model,
+    sector_label;
+    target_eigval_idx::Int=1,
+    filling_fraction::Rational{Int},
+    flavor_a::Function=i -> true,
+    flavor_b::Function=i -> true,
+    ed_mode::Symbol=:matrix,
+    ed_data::Union{Symmetry_Resolved_ED_Data,Nothing}=nothing,
+    fold_to_first_bz::Bool=true,
+    fig_path::Union{Nothing,String}=nothing,
+    title::String="Allowed-momentum S(q)",
+    markersize::Real=24,
+    colorrange=nothing,
+)
+    qx, qy, S_q = structure_factor_allowed_momenta(
+        model, sector_label;
+        target_eigval_idx=target_eigval_idx,
+        filling_fraction=filling_fraction,
+        flavor_a=flavor_a,
+        flavor_b=flavor_b,
+        ed_mode=ed_mode,
+        ed_data=ed_data,
+        fold_to_first_bz=fold_to_first_bz,
+    )
+
+    fig = Figure(size=(650, 560))
+    ax = Axis(fig[1, 1]; xlabel="q_x", ylabel="q_y", title=title, aspect=DataAspect())
+    sc = if colorrange === nothing
+        scatter!(ax, qx, qy; color=S_q, colormap=:viridis, markersize=markersize)
+    else
+        scatter!(ax, qx, qy;
+            color=S_q, colormap=:viridis, colorrange=colorrange, markersize=markersize)
+    end
+    _draw_bz_boundary!(ax, model.lattice)
+    Colorbar(fig[1, 2], sc; label="S(q)")
+
+    if fig_path !== nothing
+        mkpath(dirname(fig_path))
+        save(fig_path, fig)
+    end
+    return fig
+end
+
+"""
     plot_structure_factor_map_panels(maps; fig_path=nothing, title="Connected static structure factor S(q)")
 
 Plot several precomputed static structure-factor maps in one row with a unified
@@ -480,6 +597,46 @@ function plot_structure_factor_map_panels(
     end
     Label(fig[0, 1:length(maps)], title; fontsize=18)
     Colorbar(fig[1, length(maps)+1], hm_ref; label="S(q)")
+
+    if fig_path !== nothing
+        mkpath(dirname(fig_path))
+        save(fig_path, fig)
+    end
+    return fig
+end
+
+"""
+    plot_structure_factor_allowed_momenta_panels(maps; fig_path=nothing, title="Allowed-momentum S(q)")
+
+Plot several finite-size allowed-momentum static structure-factor datasets in
+one row with a unified color scale and first-BZ boundary overlays.
+
+Each entry of `maps` is a named tuple with fields:
+`qx`, `qy`, `values`, `lattice`, and `title`.
+"""
+function plot_structure_factor_allowed_momenta_panels(
+    maps::AbstractVector;
+    fig_path::Union{Nothing,String}=nothing,
+    title::String="Allowed-momentum S(q)",
+    markersize::Real=24,
+)
+    isempty(maps) && error("maps must not be empty.")
+
+    vmin = minimum(minimum(m.values) for m in maps)
+    vmax = maximum(maximum(m.values) for m in maps)
+
+    fig = Figure(size=(420 * length(maps) + 110, 420))
+    sc_ref = nothing
+    for (idx, m) in enumerate(maps)
+        ax = Axis(fig[1, idx]; xlabel="q_x", ylabel="q_y", title=m.title, aspect=DataAspect())
+        sc = scatter!(ax, m.qx, m.qy;
+            color=m.values, colormap=:viridis, colorrange=(vmin, vmax),
+            markersize=markersize)
+        _draw_bz_boundary!(ax, m.lattice)
+        sc_ref === nothing && (sc_ref = sc)
+    end
+    Label(fig[0, 1:length(maps)], title; fontsize=18)
+    Colorbar(fig[1, length(maps)+1], sc_ref; label="S(q)")
 
     if fig_path !== nothing
         mkpath(dirname(fig_path))
