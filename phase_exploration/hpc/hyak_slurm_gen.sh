@@ -15,6 +15,7 @@ REPO_DIR="${REPO_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 JULIA_BIN="${JULIA_BIN:-/mmfs1/gscratch/cmt/hxd/opt/julia-1.12.6/bin/julia}"
 JULIA_DEPOT="${JULIA_DEPOT:-/mmfs1/gscratch/cmt/hxd/julia_depot}"
 JULIA_PROJECT_DIR="${JULIA_PROJECT_DIR:-${JULIA_DEPOT}/environments/v1.12}"
+TIGHTBINDING_DIR="${TIGHTBINDING_DIR:-$(dirname "${REPO_DIR}")/TightBinding}"
 ACCOUNT="cmt"
 PARTITION="ckpt-g2"
 WALLTIME="04:00:00"
@@ -176,11 +177,13 @@ trap 'status=\$?; printf "ERROR: exit=%d line=%d command=%s\n" "\${status}" "\${
 export JULIA_PROJECT="${JULIA_PROJECT_DIR}"
 export JULIA_DEPOT_PATH="${JULIA_DEPOT}"
 export PHASE_EXPLORATION_REPO="${REPO_DIR}"
+export TIGHTBINDING_DIR="${TIGHTBINDING_DIR}"
 DONE_DIR="${REPO_DIR}/phase_exploration/hpc/completed"
 DONE_FILE="\${DONE_DIR}/${SETUP_JOB_NAME}.done"
 
 echo "Preparing ${JULIA_PROJECT_DIR} for repository ${REPO_DIR}"
 [[ -x "${JULIA_BIN}" ]] || { echo "Julia is not executable: ${JULIA_BIN}" >&2; exit 2; }
+[[ -f "${TIGHTBINDING_DIR}/Project.toml" ]] || { echo "Missing TightBinding checkout: ${TIGHTBINDING_DIR}" >&2; exit 2; }
 "${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
   "${REPO_DIR}/phase_exploration/bin/prepare_hpc_environment.jl"
 mkdir -p "\${DONE_DIR}"

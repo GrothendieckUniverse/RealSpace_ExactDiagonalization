@@ -148,6 +148,20 @@ Every newly queued data job receives an `afterok` dependency on setup. A broken
 or incomplete environment therefore stops at one setup job instead of
 producing the same package-load error in every data job.
 
+`TightBinding` is a local path dependency and must normally be checked out as a
+sibling of this repository:
+
+```text
+repo/
+  RealSpace_ExactDiagonalization/
+  TightBinding/
+```
+
+The tracked manifest uses the portable relative path `../TightBinding`. For a
+different checkout layout, export `TIGHTBINDING_DIR=/absolute/path/TightBinding`
+before running the generator. Setup validates this path before doing any long
+precompile and re-develops it relative to the repository project.
+
 The helper then calls `sbatch` for every manifest entry in a loop. Since
 `sbatch` returns immediately, all data jobs are submitted asynchronously and
 can run independently after setup. Before each submission it skips an exact

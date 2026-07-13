@@ -1451,7 +1451,7 @@ version = "0.11.9"
 
 [[deps.TightBinding]]
 deps = ["CairoMakie", "Graphs", "LinearAlgebra", "MLStyle", "SparseArrays", "Test"]
-path = "/home/hxd/Dropbox/GrothendieckUniverse/TightBinding/"
+path = "../TightBinding"
 uuid = "20fe1238-1445-43d3-9455-5ed0db04161c"
 version = "0.3.0"
 
