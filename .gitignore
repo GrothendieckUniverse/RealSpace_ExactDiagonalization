@@ -3,5 +3,7 @@
 checkpoints/
 figures/
 
+phase_exploration_bak/
+
 reasonix.toml
 .codegraph
