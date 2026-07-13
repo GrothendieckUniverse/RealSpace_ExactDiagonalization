@@ -16,6 +16,8 @@
 using RealSpace_ExactDiagonalization
 using CairoMakie
 using TightBinding
+
+using MLStyle
 using Printf
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -29,23 +31,24 @@ const params_Sun_Gu_Katsura_Sarma = Dict(
     "t′′" => -1 / (2 + 2 * sqrt(2)), # next-next-nearest-neighbor hopping
     "ϕ_over_2π" => 1 / 8, # flux per 2π (time-reversal breaking)
     "V1" => 2.0, # NN density-density interaction (inter-sublattice)
-    "V2" => 1.0, # NNN interaction (same sublattice, x/y)
+    "V2" => 0.1, # NNN interaction (same sublattice, x/y)
     "V3" => 0.0,  # NNNN interaction (same sublattice, diagonal)
     "λ" => 1.0, # ratio of `H_int / H_K`
 )
 
-"我自己的 optimial parameter, Quit large gap at 1/3!"
+"my fine tuned parameter, quite large gap at 1/3!"
 const my_optimal_param = Dict(
-    "t" => -1,
+    "t" => -1.0,
     "t′_1" => -1.4 / (2 + sqrt(2)),
     "t′_2" => 1.4 / (2 + sqrt(2)),
     "t′′" => -1.0 / (2 + 2 * sqrt(2)),
     "ϕ_over_2π" => 1 / 8,
-    "V1" => 2.0,
-    "V2" => 0.15,
+    "V1" => 2.,
+    "V2" => 0.45,
     "V3" => 0.2,
     "λ" => 3,
 )
+
 
 
 
@@ -62,9 +65,11 @@ function test_fermion_fci_checkboard(;
         "V3" => 0.0,
         "λ" => 1.0,
     ),
-    filling_fraction_per_band::Rational{Int}=1 // 3
+    filling_fraction_per_band::Rational{Int}=1 // 3,
+    nev::Int=5,
+    mode::Symbol=:matrix
 )
-    params = merge(Dict{String,Float64}(), params_Sun_Gu_Katsura_Sarma, params)
+    params = merge(Dict{String,Float64}(), my_optimal_param, params)
 
     r_data = TightBinding.initialize_real_space_lattice(;
         lattice_name="checkerboard",
@@ -123,7 +128,7 @@ function test_fermion_fci_checkboard(;
     # scale the interaction strength with `λ`
     V1 *= params["λ"]
     V2 *= params["λ"]
-    V2 *= params["λ"]
+    V3 *= params["λ"]
 
     L1, L2 = lattice.sample_size
     density_terms = Vector{Tuple{Int,Int,ComplexF64}}()
@@ -179,7 +184,7 @@ function test_fermion_fci_checkboard(;
     println("  Irreps: $(length(ed_data.irrep_list))  (momenta (k₁,k₂))")
     println("="^70)
 
-    ed_scan!(ed_data; nev=5, mode=:matrix)
+    ed_scan!(ed_data; nev=nev, mode=mode)
 
 
     @info "Scaled interaction strengths: V1=$V1, V2=$V2, V3=$V3"
