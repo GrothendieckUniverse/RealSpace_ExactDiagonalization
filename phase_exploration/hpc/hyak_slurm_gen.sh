@@ -76,7 +76,7 @@ resource_for() {
     3x4) MEM_GB=12 ;;
     3x5) MEM_GB=36 ;;
     3x6) MEM_GB=48 ;;
-    3x7) MEM_GB=72 ;;
+    3x7) MEM_GB=128 ;;
     4x6) MEM_GB=240 ;;
     *) echo "Unknown geometry ${geometry}" >&2; exit 2 ;;
   esac
@@ -86,19 +86,19 @@ resource_for() {
   # Hamiltonian columns are constructed with Distributed.pmap.
   if [[ "${geometry}" == "3x4" ]]; then
     MODE="matrix"
-    NTASKS=8
+    NTASKS=12
     WALLTIME="01:00:00"
   elif [[ "${geometry}" == "3x5" ]]; then
     MODE="matrix"
-    NTASKS=12
+    NTASKS=24
     WALLTIME="02:00:00"
   elif [[ "${geometry}" == "3x6" ]]; then
     MODE="matrix"
-    NTASKS=36
+    NTASKS=48
     WALLTIME="04:00:00"
   elif [[ "${geometry}" == "3x7" ]]; then
     MODE="matrix"
-    NTASKS=72
+    NTASKS=84
     WALLTIME="04:00:00"
   elif [[ "${geometry}" == "4x6" ]]; then
     # Matrix-free H|psi> is shared-memory threaded.  Use one Julia process
