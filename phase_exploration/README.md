@@ -116,9 +116,12 @@ restart checkpoints and can be removed after a completed campaign.
 
 ## Hyak / Klone
 
-Edit the paths, allocation, partition, and resource table near the top of
-[`hpc/hyak_slurm_gen.sh`](hpc/hyak_slurm_gen.sh), then generate (but do not yet
-submit) the independent Slurm scripts:
+Edit the Julia path, depot, allocation, partition, and resource table near the
+top of [`hpc/hyak_slurm_gen.sh`](hpc/hyak_slurm_gen.sh), then generate (but do
+not yet submit) the independent Slurm scripts. The repository path is inferred
+from the generator's location, so the generated jobs follow the actual checkout
+under `/gscratch` or `/mmfs1/gscratch`. It can be overridden explicitly with
+the `REPO_DIR` environment variable.
 
 ```bash
 bash phase_exploration/hpc/hyak_slurm_gen.sh
@@ -135,11 +138,28 @@ phase_exploration/hpc/generated/submit_all.sh
 
 The helper calls `sbatch` for every manifest entry in a loop. Since `sbatch`
 returns immediately, all data jobs are submitted asynchronously and can run
-independently. It records their IDs in a timestamped CSV and submits the plot
-job with an `afterok` dependency on the entire data collection.
+independently. Before each submission it skips an exact job-name match already
+shown by `squeue`, and skips a completed point when all required result files
+are present. Successful generated jobs also write persistent markers under
+`hpc/completed/`. The timestamped submission CSV records submitted and skipped
+jobs. The plot job depends on both newly submitted jobs and matching jobs that
+were already active, so re-running `submit_all.sh` is safe while a campaign is
+in progress.
 
-Matrix-free jobs use local Julia worker processes within one Slurm allocation;
-the toolbox's distributed Hamiltonian application then uses those workers.
+Each allocation invokes the Julia executable directly, without wrapping it in
+`srun`. Matrix-free jobs use Julia's `-p` option to launch local worker
+processes within the CPUs granted to the single Slurm task; the toolbox's
+distributed Hamiltonian application then uses those workers. Generated jobs
+print their resolved paths, resources, Julia version, and the failing shell
+line/command to the Slurm logs before exiting on an error.
+
+After an HPC-side failure, inspect the job state and corresponding logs with:
+
+```bash
+sacct -j JOB_ID --format=JobID,JobName,State,ExitCode,Elapsed,MaxRSS,ReqMem
+ls phase_exploration/hpc/logs/
+```
+
 The 4x6 PES is exceptionally memory intensive in the current predefined
 toolbox because it explicitly expands the many-body state and constructs a
 dense particle-partition matrix. The generated request is therefore large,
