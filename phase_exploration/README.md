@@ -138,13 +138,15 @@ submission manifest. Review the collection, then queue everything with:
 phase_exploration/hpc/generated/submit_all.sh
 ```
 
-The helper first submits one revision-specific environment job. That job
-develops the current checkout into the shared Julia environment, instantiates
-all package sources, precompiles them once, and verifies both
-`RealSpace_ExactDiagonalization` and `SlurmClusterManager`. Every newly queued
-data job receives an `afterok` dependency on this setup job. A broken or
-incomplete depot therefore stops at one setup job instead of producing the same
-package-load error in every data job.
+The helper first submits one revision-specific environment job. The shared
+`v1.12` environment is used only to load `SlurmClusterManager`; the setup job
+then activates the repository project, instantiates and precompiles its exact
+manifest, and loads the complete phase-study module as a preflight. This split
+is important: packages such as `JLD2` are direct dependencies of the repository
+project but need not be directly loadable from the shared launcher environment.
+Every newly queued data job receives an `afterok` dependency on setup. A broken
+or incomplete environment therefore stops at one setup job instead of
+producing the same package-load error in every data job.
 
 The helper then calls `sbatch` for every manifest entry in a loop. Since
 `sbatch` returns immediately, all data jobs are submitted asynchronously and
@@ -155,12 +157,14 @@ markers under `hpc/completed/`. The timestamped submission CSV records setup,
 submitted, and skipped jobs. The plot job depends on setup, newly submitted
 jobs, and matching jobs that were already active.
 
-The batch shell invokes Julia directly. Inside Julia,
-`SlurmClusterManager.SlurmManager` launches the allocated Slurm tasks with the
-shared project and depot explicitly propagated, then loads the ED toolbox on
-every worker. `_bootstrap.jl` contains no cluster-launch logic and remains safe
-for ordinary local CLI runs. Generated jobs print their resolved paths,
-resources, Julia version, and the failing shell line/command to the Slurm logs.
+The batch shell invokes Julia directly from the shared launcher environment.
+Inside Julia, the master activates the repository project and
+`SlurmClusterManager.SlurmManager` launches every allocated task with that same
+repository project and depot explicitly propagated. The ED toolbox is then
+loaded on every worker. `_bootstrap.jl` contains no cluster-launch logic and
+remains safe for ordinary local CLI runs. Generated jobs print their resolved
+paths, resources, Julia version, and the failing shell line/command to the
+Slurm logs.
 
 After an HPC-side failure, inspect the job state and corresponding logs with:
 

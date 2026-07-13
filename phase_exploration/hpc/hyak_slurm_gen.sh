@@ -281,7 +281,7 @@ echo "Starting plot job \${SLURM_JOB_ID:-unknown} on \$(hostname) at \$(date --i
 [[ -d "${REPO_DIR}" ]] || { echo "Missing repository: ${REPO_DIR}" >&2; exit 2; }
 [[ -x "${JULIA_BIN}" ]] || { echo "Julia is not executable: ${JULIA_BIN}" >&2; exit 2; }
 "${JULIA_BIN}" --version
-"${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
+"${JULIA_BIN}" --project="${REPO_DIR}" --startup-file=no \
   "${REPO_DIR}/phase_exploration/bin/plot_results.jl" --kind all
 mkdir -p "\${DONE_DIR}"
 printf 'job_id=%s\\ncompleted_at=%s\\n' \
