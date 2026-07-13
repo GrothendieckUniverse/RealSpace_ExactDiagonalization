@@ -8,6 +8,12 @@ isempty(ARGS) && error("Usage: run_slurm_job.jl TARGET_SCRIPT [TARGET_ARGS...]")
 target_script = abspath(popfirst!(ARGS))
 isfile(target_script) || error("Target Julia script does not exist: $target_script")
 
+mode_index = findfirst(==("--mode"), ARGS)
+mode_index === nothing && error("Target arguments must include `--mode matrix` or `--mode matrixfree`.")
+mode_index == length(ARGS) && error("Missing value after `--mode`.")
+solver_mode = Symbol(lowercase(ARGS[mode_index + 1]))
+solver_mode in (:matrix, :matrixfree) || error("Unknown solver mode: $(ARGS[mode_index + 1])")
+
 launcher_project = get(ENV, "JULIA_PROJECT", "")
 depot_dir = get(ENV, "JULIA_DEPOT_PATH", "")
 repo_dir = get(ENV, "PHASE_EXPLORATION_REPO", "")
@@ -26,26 +32,36 @@ ENV["JULIA_PROJECT"] = ed_project
 ENV["SLURM_EXPORT_ENV"] = "ALL"
 ENV["SRUN_EXPORT_ENV"] = "ALL"
 
-@info "Slurm Julia launcher" job_id=get(ENV, "SLURM_JOB_ID", missing) ntasks=get(ENV, "SLURM_NTASKS", missing) launcher_project ed_project depot_dir target_script
+@info "Slurm Julia launcher" job_id=get(ENV, "SLURM_JOB_ID", missing) ntasks=get(ENV, "SLURM_NTASKS", missing) cpus_per_task=get(ENV, "SLURM_CPUS_PER_TASK", missing) julia_threads=Threads.nthreads() solver_mode launcher_project ed_project depot_dir target_script
 
-addprocs(
-    SlurmClusterManager.SlurmManager(;
-        launch_timeout=900.0,
-        srun_post_exit_sleep=2.0,
-    );
-    exeflags=["--project=$(ed_project)", "--startup-file=no"],
-    env=[
-        "JULIA_PROJECT" => ed_project,
-        "JULIA_DEPOT_PATH" => depot_dir,
-        "SLURM_EXPORT_ENV" => "ALL",
-        "SRUN_EXPORT_ENV" => "ALL",
-    ],
-)
+if solver_mode == :matrix
+    Threads.nthreads() == 1 || error("Explicit distributed matrix mode requires JULIA_NUM_THREADS=1; got $(Threads.nthreads()).")
+    addprocs(
+        SlurmClusterManager.SlurmManager(;
+            launch_timeout=900.0,
+            srun_post_exit_sleep=2.0,
+        );
+        exeflags=["--project=$(ed_project)", "--startup-file=no"],
+        env=[
+            "JULIA_PROJECT" => ed_project,
+            "JULIA_DEPOT_PATH" => depot_dir,
+            "JULIA_NUM_THREADS" => "1",
+            "SLURM_EXPORT_ENV" => "ALL",
+            "SRUN_EXPORT_ENV" => "ALL",
+        ],
+    )
 
-@info "Launched Julia workers" nworkers=Distributed.nworkers() workers=Distributed.workers()
-Distributed.nworkers() > 0 || error("SlurmClusterManager launched no Julia workers.")
-
-@everywhere using RealSpace_ExactDiagonalization, LinearAlgebra, Statistics
+    @info "Launched workers for distributed matrix construction" nworkers=Distributed.nworkers() workers=Distributed.workers()
+    Distributed.nworkers() > 0 || error("SlurmClusterManager launched no Julia workers for explicit matrix mode.")
+    @everywhere using RealSpace_ExactDiagonalization, LinearAlgebra, Statistics
+else
+    # The matrix-free operator uses Threads.@threads and thread-local buffers.
+    # Keep it in one process so all allocated CPUs contribute to H|psi>.
+    Distributed.nworkers() == 0 || error("Matrix-free mode must not launch distributed workers.")
+    Threads.nthreads() > 1 || error("Matrix-free mode requires JULIA_NUM_THREADS > 1.")
+    using RealSpace_ExactDiagonalization, LinearAlgebra, Statistics
+    @info "Using threaded matrix-free solver" julia_threads=Threads.nthreads()
+end
 
 # ARGS now contains only arguments intended for the target CLI script.
 include(target_script)

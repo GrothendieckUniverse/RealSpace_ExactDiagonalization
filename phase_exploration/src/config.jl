@@ -53,8 +53,6 @@ end
 function mode_for(sample::Tuple{Int,Int}, task::Symbol=:sweep)
     if sample == (4, 6)
         return :matrixfree
-    elseif task in (:charge_gap, :diagnostics) && sample == (3, 7)
-        return :matrixfree
     else
         return :matrix
     end

@@ -66,7 +66,9 @@ resource_for() {
   local task="$1"
   local geometry="$2"
   MODE="matrix"
-  CPUS=1
+  NTASKS=1
+  CPUS_PER_TASK=1
+  JULIA_THREADS=1
   MEM_GB=128
   WALLTIME="04:00:00"
 
@@ -79,25 +81,33 @@ resource_for() {
     *) echo "Unknown geometry ${geometry}" >&2; exit 2 ;;
   esac
 
+  # Explicit sparse matrices are substantially faster for every currently
+  # tractable 3xL cluster.  Allocate one Julia process per Slurm task so the
+  # Hamiltonian columns are constructed with Distributed.pmap.
   if [[ "${geometry}" == "3x4" ]]; then
-    MODE="matrixfree"
-    CPUS=8
+    MODE="matrix"
+    NTASKS=8
     WALLTIME="01:00:00"
   elif [[ "${geometry}" == "3x5" ]]; then
-    MODE="matrixfree"
-    CPUS=12
+    MODE="matrix"
+    NTASKS=12
     WALLTIME="02:00:00"
   elif [[ "${geometry}" == "3x6" ]]; then
-    MODE="matrixfree"
-    CPUS=36
+    MODE="matrix"
+    NTASKS=36
     WALLTIME="04:00:00"
   elif [[ "${geometry}" == "3x7" ]]; then
-    MODE="matrixfree"
-    CPUS=72
+    MODE="matrix"
+    NTASKS=72
     WALLTIME="04:00:00"
   elif [[ "${geometry}" == "4x6" ]]; then
+    # Matrix-free H|psi> is shared-memory threaded.  Use one Julia process
+    # with many threads; spawning many one-thread processes would leave the
+    # matrix-free kernel effectively serial and duplicate large basis data.
     MODE="matrixfree"
-    CPUS=216
+    NTASKS=1
+    CPUS_PER_TASK=216
+    JULIA_THREADS=216
     WALLTIME="08:00:00"
   fi
 }
@@ -113,8 +123,8 @@ write_header() {
 #SBATCH --job-name=${job_name}
 #SBATCH --time=${WALLTIME}
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=${CPUS}
-#SBATCH --cpus-per-task=1
+#SBATCH --ntasks-per-node=${NTASKS}
+#SBATCH --cpus-per-task=${CPUS_PER_TASK}
 #SBATCH --mem=${MEM_GB}G
 #SBATCH --chdir=${REPO_DIR}
 #SBATCH --output=${HYAK_LOG_DIR}/${job_name}_%j.out
@@ -126,7 +136,7 @@ set -Eeuo pipefail
 trap 'status=\$?; printf "ERROR: exit=%d line=%d command=%s\\n" "\${status}" "\${LINENO}" "\${BASH_COMMAND}" >&2; exit "\${status}"' ERR
 export JULIA_PROJECT="${JULIA_PROJECT_DIR}"
 export JULIA_DEPOT_PATH="${JULIA_DEPOT}"
-export JULIA_NUM_THREADS=1
+export JULIA_NUM_THREADS=${JULIA_THREADS}
 export OPENBLAS_NUM_THREADS=1
 export SLURM_EXPORT_ENV=ALL
 export SRUN_EXPORT_ENV=ALL
@@ -138,7 +148,8 @@ echo "Starting Slurm job \${SLURM_JOB_ID:-unknown} on \$(hostname) at \$(date --
 echo "Repository: ${REPO_DIR}"
 echo "Julia project: ${JULIA_PROJECT_DIR}"
 echo "Julia: ${JULIA_BIN}"
-echo "Resources: tasks=\${SLURM_NTASKS:-unknown} memory=${MEM_GB}G"
+echo "Solver: ${MODE}"
+echo "Resources: tasks=\${SLURM_NTASKS:-unknown} cpus_per_task=\${SLURM_CPUS_PER_TASK:-unknown} julia_threads=\${JULIA_NUM_THREADS} memory=${MEM_GB}G"
 [[ -d "${REPO_DIR}" ]] || { echo "Missing repository: ${REPO_DIR}" >&2; exit 2; }
 [[ -f "${REPO_DIR}/Project.toml" ]] || { echo "Missing Project.toml under ${REPO_DIR}" >&2; exit 2; }
 [[ -f "${JULIA_PROJECT_DIR}/Project.toml" ]] || { echo "Missing shared Julia environment: ${JULIA_PROJECT_DIR}" >&2; exit 2; }

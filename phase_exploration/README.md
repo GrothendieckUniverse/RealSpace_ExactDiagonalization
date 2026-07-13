@@ -31,10 +31,11 @@ with `--overwrite true` (or remove the corresponding old result/checkpoint
 directories). Checkpoint loading validates the model, filling, and flux and
 will refuse incompatible cached states.
 
-The default solver is explicit sparse-matrix ED for 3x5, 3x6, and the 3x7
-sweep. Matrix-free ED is used for 4x6 and, more conservatively, for 3x7
-topology/charge-gap jobs. CLI `--mode matrix` or `--mode matrixfree` always
-overrides this policy.
+The default solver is explicit sparse-matrix ED for every geometry from 3x4
+through 3x7, including diagnostics and charge-gap jobs. On Hyak, Hamiltonian
+matrix construction is distributed across one-thread Julia workers. The 4x6
+geometry uses matrix-free ED in one multithreaded Julia process. CLI
+`--mode matrix` or `--mode matrixfree` always overrides this policy.
 
 ## Local jobs
 
