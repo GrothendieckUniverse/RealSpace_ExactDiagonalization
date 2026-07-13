@@ -58,9 +58,9 @@ resource_for() {
   case "${geometry}" in
     3x4) MEM_GB=12 ;;
     3x5) MEM_GB=36 ;;
-    3x6) MEM_GB=72 ;;
-    3x7) MEM_GB=96 ;;
-    4x6) MEM_GB=256 ;;
+    3x6) MEM_GB=48 ;;
+    3x7) MEM_GB=72 ;;
+    4x6) MEM_GB=240 ;;
     *) echo "Unknown geometry ${geometry}" >&2; exit 2 ;;
   esac
 
@@ -74,11 +74,11 @@ resource_for() {
     WALLTIME="02:00:00"
   elif [[ "${geometry}" == "3x6" ]]; then
     MODE="matrixfree"
-    CPUS=72
+    CPUS=36
     WALLTIME="04:00:00"
   elif [[ "${geometry}" == "3x7" ]]; then
     MODE="matrixfree"
-    CPUS=144
+    CPUS=72
     WALLTIME="04:00:00"
   elif [[ "${geometry}" == "4x6" ]]; then
     MODE="matrixfree"
