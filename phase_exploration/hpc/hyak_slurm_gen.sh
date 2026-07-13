@@ -5,9 +5,15 @@ set -euo pipefail
 # ==========================================================================
 # User-editable Hyak / Klone paths and allocation
 # ==========================================================================
-REPO_DIR="/mmfs1/gscratch/cmt/hxd/RealSpace_ExactDiagonalization"
-JULIA_BIN="/mmfs1/gscratch/cmt/hxd/opt/julia-1.12.6/bin/julia"
-JULIA_DEPOT="/mmfs1/gscratch/cmt/hxd/julia_depot"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# By default, infer the repository root from this generator's location. This
+# keeps generated jobs valid when the checkout lives under, for example,
+# /gscratch/cmt/hxd/repo instead of a hard-coded /mmfs1 path. Export REPO_DIR
+# before running this script only if an explicit override is needed.
+REPO_DIR="${REPO_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
+JULIA_BIN="${JULIA_BIN:-/mmfs1/gscratch/cmt/hxd/opt/julia-1.12.6/bin/julia}"
+JULIA_DEPOT="${JULIA_DEPOT:-/mmfs1/gscratch/cmt/hxd/julia_depot}"
 ACCOUNT="cmt"
 PARTITION="ckpt-g2"
 WALLTIME="04:00:00"
@@ -27,13 +33,12 @@ SWEEP_NUMERATORS=(
    1.0  1.1  1.2  1.3  1.4  1.5
 )
 PHASES=(AHC FCI CDW)
-SWEEP_GEOMETRIES=(3x5 3x6 3x7 4x6)
-GAP_GEOMETRIES=(3x4 3x5 3x6 3x7 4x6)
+SWEEP_GEOMETRIES=(3x5 3x6 3x7)
+GAP_GEOMETRIES=(3x4 3x5 3x6 3x7)
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GENERATED_DIR="${SCRIPT_DIR}/generated"
 HYAK_LOG_DIR="${REPO_DIR}/phase_exploration/hpc/logs"
-mkdir -p "${GENERATED_DIR}"
+mkdir -p "${GENERATED_DIR}" "${HYAK_LOG_DIR}"
 rm -f "${GENERATED_DIR}"/*.sbatch \
       "${GENERATED_DIR}/submit_all.sh" \
       "${GENERATED_DIR}/data_jobs.txt"
@@ -45,6 +50,12 @@ value_tag() {
   tag="${tag//-/m}"
   tag="${tag//./p}"
   printf '%s' "${tag}"
+}
+
+result_value_tag() {
+  local formatted
+  printf -v formatted '%.4f' "$1"
+  value_tag "${formatted}"
 }
 
 resource_for() {
@@ -101,22 +112,43 @@ write_header() {
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=${CPUS}
 #SBATCH --mem=${MEM_GB}G
+#SBATCH --chdir=${REPO_DIR}
 #SBATCH --output=${HYAK_LOG_DIR}/${job_name}_%j.out
 #SBATCH --error=${HYAK_LOG_DIR}/${job_name}_%j.err
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=${MAIL_USER}
 
-set -euo pipefail
+set -Eeuo pipefail
+trap 'status=\$?; printf "ERROR: exit=%d line=%d command=%s\\n" "\${status}" "\${LINENO}" "\${BASH_COMMAND}" >&2; exit "\${status}"' ERR
 export JULIA_PROJECT="${REPO_DIR}"
 export JULIA_DEPOT_PATH="${JULIA_DEPOT}"
 export JULIA_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
+DONE_DIR="${REPO_DIR}/phase_exploration/hpc/completed"
+DONE_FILE="\${DONE_DIR}/${job_name}.done"
+
+echo "Starting Slurm job \${SLURM_JOB_ID:-unknown} on \$(hostname) at \$(date --iso-8601=seconds)"
+echo "Repository: ${REPO_DIR}"
+echo "Julia: ${JULIA_BIN}"
+echo "Resources: tasks=\${SLURM_NTASKS:-unknown} cpus_per_task=\${SLURM_CPUS_PER_TASK:-unknown} memory=${MEM_GB}G"
+[[ -d "${REPO_DIR}" ]] || { echo "Missing repository: ${REPO_DIR}" >&2; exit 2; }
+[[ -f "${REPO_DIR}/Project.toml" ]] || { echo "Missing Project.toml under ${REPO_DIR}" >&2; exit 2; }
+[[ -x "${JULIA_BIN}" ]] || { echo "Julia is not executable: ${JULIA_BIN}" >&2; exit 2; }
+"${JULIA_BIN}" --version
 
 WORKERS=\$((SLURM_CPUS_PER_TASK - 1))
 JULIA_ARGS=(--project="${REPO_DIR}" --startup-file=no)
 if (( WORKERS > 0 )); then
   JULIA_ARGS+=(-p "\${WORKERS}")
 fi
+
+mark_complete() {
+  mkdir -p "\${DONE_DIR}"
+  printf 'job_id=%s\\ncompleted_at=%s\\n' \
+    "\${SLURM_JOB_ID:-unknown}" "\$(date --iso-8601=seconds)" > "\${DONE_FILE}.tmp"
+  mv "\${DONE_FILE}.tmp" "\${DONE_FILE}"
+  echo "Completion marker: \${DONE_FILE}"
+}
 EOF
 }
 
@@ -124,13 +156,20 @@ for geometry in "${SWEEP_GEOMETRIES[@]}"; do
   resource_for sweep "${geometry}"
   for x in "${SWEEP_NUMERATORS[@]}"; do
     xtag="$(value_tag "${x}")"
+    result_xtag="$(result_value_tag "${x}")"
     job="${GENERATED_DIR}/sweep_${geometry}_x_${xtag}.sbatch"
     write_header "${job}" "tpp_sw_${geometry}_${xtag}"
     cat >> "${job}" <<EOF
-srun "${JULIA_BIN}" "\${JULIA_ARGS[@]}" \
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/spectrum.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_allowed.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_dense.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_metrics.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/run_metadata.csv
+"${JULIA_BIN}" "\${JULIA_ARGS[@]}" \
   "${REPO_DIR}/phase_exploration/bin/run_sweep_point.jl" \
   --geometry "${geometry}" --x "${x}" --task all --mode "${MODE}" \
   --nev 10 --dense-resolution 101
+mark_complete
 EOF
     printf '%s\n' "$(basename "${job}")" >> "${DATA_MANIFEST}"
   done
@@ -143,11 +182,18 @@ for geometry in "${SWEEP_GEOMETRIES[@]}"; do
     job="${GENERATED_DIR}/diagnostics_${geometry}_${phase_lower}.sbatch"
     write_header "${job}" "tpp_dx_${geometry}_${phase_lower}"
     cat >> "${job}" <<EOF
-srun "${JULIA_BIN}" "\${JULIA_ARGS[@]}" \
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/zero_flux_spectrum.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/spectrum_flow.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/charge_pump.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/spatial_entanglement_spectrum.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/particle_entanglement_spectrum.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/summary.csv
+"${JULIA_BIN}" "\${JULIA_ARGS[@]}" \
   "${REPO_DIR}/phase_exploration/bin/run_diagnostic_point.jl" \
   --phase "${phase}" --geometry "${geometry}" --mode "${MODE}" \
   --observables flow,pump,spatial_es,pes --zero-nev 10 --flow-nev 3 \
   --flow-steps 25 --pump-steps 17 --pes-na 2
+mark_complete
 EOF
     printf '%s\n' "$(basename "${job}")" >> "${DATA_MANIFEST}"
   done
@@ -160,9 +206,11 @@ for geometry in "${GAP_GEOMETRIES[@]}"; do
     job="${GENERATED_DIR}/charge_gap_${geometry}_${phase_lower}.sbatch"
     write_header "${job}" "tpp_cg_${geometry}_${phase_lower}"
     cat >> "${job}" <<EOF
-srun "${JULIA_BIN}" "\${JULIA_ARGS[@]}" \
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/charge_gap.csv
+"${JULIA_BIN}" "\${JULIA_ARGS[@]}" \
   "${REPO_DIR}/phase_exploration/bin/run_charge_gap_point.jl" \
   --phase "${phase}" --geometry "${geometry}" --mode "${MODE}" --nev 2
+mark_complete
 EOF
     printf '%s\n' "$(basename "${job}")" >> "${DATA_MANIFEST}"
   done
@@ -179,52 +227,146 @@ cat > "${GENERATED_DIR}/plot_results.sbatch" <<EOF
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=32G
+#SBATCH --chdir=${REPO_DIR}
 #SBATCH --output=${HYAK_LOG_DIR}/tpp_plot_%j.out
 #SBATCH --error=${HYAK_LOG_DIR}/tpp_plot_%j.err
-set -euo pipefail
+set -Eeuo pipefail
+trap 'status=\$?; printf "ERROR: exit=%d line=%d command=%s\\n" "\${status}" "\${LINENO}" "\${BASH_COMMAND}" >&2; exit "\${status}"' ERR
 export JULIA_PROJECT="${REPO_DIR}"
 export JULIA_DEPOT_PATH="${JULIA_DEPOT}"
-srun "${JULIA_BIN}" --project="${REPO_DIR}" --startup-file=no \
+DONE_DIR="${REPO_DIR}/phase_exploration/hpc/completed"
+DONE_FILE="\${DONE_DIR}/tpp_plot.done"
+echo "Starting plot job \${SLURM_JOB_ID:-unknown} on \$(hostname) at \$(date --iso-8601=seconds)"
+[[ -d "${REPO_DIR}" ]] || { echo "Missing repository: ${REPO_DIR}" >&2; exit 2; }
+[[ -x "${JULIA_BIN}" ]] || { echo "Julia is not executable: ${JULIA_BIN}" >&2; exit 2; }
+"${JULIA_BIN}" --version
+"${JULIA_BIN}" --project="${REPO_DIR}" --startup-file=no \
   "${REPO_DIR}/phase_exploration/bin/plot_results.jl" --kind all
+mkdir -p "\${DONE_DIR}"
+printf 'job_id=%s\\ncompleted_at=%s\\n' \
+  "\${SLURM_JOB_ID:-unknown}" "\$(date --iso-8601=seconds)" > "\${DONE_FILE}"
+echo "Completion marker: \${DONE_FILE}"
 EOF
 
 cat > "${GENERATED_DIR}/submit_all.sh" <<'EOF'
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-mkdir -p "$(dirname "${SCRIPT_DIR}")/logs"
+HPC_DIR="$(dirname "${SCRIPT_DIR}")"
+DONE_DIR="${HPC_DIR}/completed"
+mkdir -p "${HPC_DIR}/logs" "${DONE_DIR}"
 MANIFEST="${SCRIPT_DIR}/data_jobs.txt"
 [[ -s "${MANIFEST}" ]] || { echo "Missing or empty ${MANIFEST}" >&2; exit 2; }
 
+declare -A active_ids_by_name=()
+while IFS='|' read -r active_name active_id; do
+  [[ -n "${active_name}" && -n "${active_id}" ]] || continue
+  if [[ -n "${active_ids_by_name[${active_name}]:-}" ]]; then
+    active_ids_by_name["${active_name}"]+=":${active_id}"
+  else
+    active_ids_by_name["${active_name}"]="${active_id}"
+  fi
+done < <(squeue --noheader --user "${USER}" --format='%j|%A' 2>/dev/null || true)
+
+job_slurm_name() {
+  local job_path="$1"
+  sed -n 's/^#SBATCH --job-name=//p' "${job_path}"
+}
+
+job_outputs_complete() {
+  local job_path="$1"
+  local required_output
+  local found=0
+  while IFS= read -r required_output; do
+    [[ -n "${required_output}" ]] || continue
+    found=1
+    [[ -s "${required_output}" ]] || return 1
+  done < <(sed -n 's/^# PHASE_STUDY_REQUIRED_OUTPUT=//p' "${job_path}")
+  (( found == 1 ))
+}
+
+declare -A dependency_seen=()
+dependency_ids=()
+add_dependency_ids() {
+  local id
+  local ids="$1"
+  local split_ids=()
+  IFS=':' read -r -a split_ids <<< "${ids}"
+  for id in "${split_ids[@]}"; do
+    [[ -n "${id}" ]] || continue
+    if [[ -z "${dependency_seen[${id}]:-}" ]]; then
+      dependency_seen["${id}"]=1
+      dependency_ids+=("${id}")
+    fi
+  done
+}
+
 mapfile -t job_names < "${MANIFEST}"
 job_ids=()
+submission_records=()
+skipped_active=0
+skipped_complete=0
 for job_name in "${job_names[@]}"; do
   [[ -n "${job_name}" ]] || continue
   job_path="${SCRIPT_DIR}/${job_name}"
   [[ -f "${job_path}" ]] || { echo "Missing generated job ${job_path}" >&2; exit 2; }
+  slurm_name="$(job_slurm_name "${job_path}")"
+  [[ -n "${slurm_name}" ]] || { echo "Missing Slurm job name in ${job_path}" >&2; exit 2; }
+
+  if [[ -n "${active_ids_by_name[${slurm_name}]:-}" ]]; then
+    active_ids="${active_ids_by_name[${slurm_name}]}"
+    add_dependency_ids "${active_ids}"
+    submission_records+=("${job_name},skipped_active,${active_ids//:/|}")
+    printf 'skipped   %-55s -> already queued/running as %s\n' "${job_name}" "${active_ids}"
+    ((skipped_active += 1))
+    continue
+  fi
+
+  if job_outputs_complete "${job_path}"; then
+    printf 'detected_from=result_files\ncompleted_at=%s\n' \
+      "$(date --iso-8601=seconds)" > "${DONE_DIR}/${slurm_name}.done"
+    submission_records+=("${job_name},skipped_complete,result_files")
+    printf 'skipped   %-55s -> required result files already exist\n' "${job_name}"
+    ((skipped_complete += 1))
+    continue
+  fi
+
   submission="$(sbatch --parsable "${job_path}")"
   job_id="${submission%%;*}"
   job_ids+=("${job_id}")
+  add_dependency_ids "${job_id}"
+  active_ids_by_name["${slurm_name}"]="${job_id}"
+  submission_records+=("${job_name},submitted,${job_id}")
   printf 'submitted %-55s -> %s\n' "${job_name}" "${job_id}"
 done
-
-if ((${#job_ids[@]} == 0)); then
-  echo "No data jobs were submitted." >&2
-  exit 2
-fi
 
 timestamp="$(date +%Y%m%d_%H%M%S)"
 submission_log="${SCRIPT_DIR}/submission_${timestamp}.csv"
 {
-  echo "job_file,job_id"
-  paste -d, "${MANIFEST}" <(printf '%s\n' "${job_ids[@]}")
+  echo "job_file,status,job_id_or_reason"
+  printf '%s\n' "${submission_records[@]}"
 } > "${submission_log}"
 
-dependency="$(IFS=:; echo "${job_ids[*]}")"
-plot_submission="$(sbatch --parsable --dependency="afterok:${dependency}" "${SCRIPT_DIR}/plot_results.sbatch")"
-plot_id="${plot_submission%%;*}"
-printf 'submitted %-55s -> %s (afterok all data jobs)\n' "plot_results.sbatch" "${plot_id}"
-printf 'Queued %d independent data jobs asynchronously.\n' "${#job_ids[@]}"
+if [[ -n "${active_ids_by_name[tpp_plot]:-}" ]]; then
+  printf 'skipped   %-55s -> plot job already queued/running as %s\n' \
+    "plot_results.sbatch" "${active_ids_by_name[tpp_plot]}"
+elif ((${#dependency_ids[@]} > 0)); then
+  dependency="$(IFS=:; echo "${dependency_ids[*]}")"
+  plot_submission="$(sbatch --parsable --dependency="afterok:${dependency}" "${SCRIPT_DIR}/plot_results.sbatch")"
+  plot_id="${plot_submission%%;*}"
+  printf 'submitted %-55s -> %s (afterok active and newly submitted data jobs)\n' \
+    "plot_results.sbatch" "${plot_id}"
+elif [[ -f "${DONE_DIR}/tpp_plot.done" ]]; then
+  printf 'skipped   %-55s -> completion marker already exists\n' "plot_results.sbatch"
+else
+  plot_submission="$(sbatch --parsable "${SCRIPT_DIR}/plot_results.sbatch")"
+  plot_id="${plot_submission%%;*}"
+  printf 'submitted %-55s -> %s (all data results already complete)\n' \
+    "plot_results.sbatch" "${plot_id}"
+fi
+
+printf 'Submitted %d new data jobs; skipped %d active and %d complete jobs.\n' \
+  "${#job_ids[@]}" "${skipped_active}" "${skipped_complete}"
 printf 'Submission record: %s\n' "${submission_log}"
 EOF
 
