@@ -116,12 +116,14 @@ restart checkpoints and can be removed after a completed campaign.
 
 ## Hyak / Klone
 
-Edit the Julia path, depot, allocation, partition, and resource table near the
-top of [`hpc/hyak_slurm_gen.sh`](hpc/hyak_slurm_gen.sh), then generate (but do
-not yet submit) the independent Slurm scripts. The repository path is inferred
-from the generator's location, so the generated jobs follow the actual checkout
-under `/gscratch` or `/mmfs1/gscratch`. It can be overridden explicitly with
-the `REPO_DIR` environment variable.
+Edit the Julia path, depot, shared project, allocation, partition, and resource
+table near the top of [`hpc/hyak_slurm_gen.sh`](hpc/hyak_slurm_gen.sh), then
+generate (but do not yet submit) the independent Slurm scripts. The shared
+project defaults to `${JULIA_DEPOT}/environments/v1.12`, matching the standard
+Klone environment. The repository path is inferred from the generator's
+location, so generated jobs follow the actual checkout under `/gscratch` or
+`/mmfs1/gscratch`. `REPO_DIR` and `JULIA_PROJECT_DIR` can both be overridden
+through environment variables.
 
 ```bash
 bash phase_exploration/hpc/hyak_slurm_gen.sh
@@ -136,22 +138,29 @@ submission manifest. Review the collection, then queue everything with:
 phase_exploration/hpc/generated/submit_all.sh
 ```
 
-The helper calls `sbatch` for every manifest entry in a loop. Since `sbatch`
-returns immediately, all data jobs are submitted asynchronously and can run
-independently. Before each submission it skips an exact job-name match already
-shown by `squeue`, and skips a completed point when all required result files
-are present. Successful generated jobs also write persistent markers under
-`hpc/completed/`. The timestamped submission CSV records submitted and skipped
-jobs. The plot job depends on both newly submitted jobs and matching jobs that
-were already active, so re-running `submit_all.sh` is safe while a campaign is
-in progress.
+The helper first submits one revision-specific environment job. That job
+develops the current checkout into the shared Julia environment, instantiates
+all package sources, precompiles them once, and verifies both
+`RealSpace_ExactDiagonalization` and `SlurmClusterManager`. Every newly queued
+data job receives an `afterok` dependency on this setup job. A broken or
+incomplete depot therefore stops at one setup job instead of producing the same
+package-load error in every data job.
 
-Each allocation invokes the Julia executable directly, without wrapping it in
-`srun`. Matrix-free jobs use Julia's `-p` option to launch local worker
-processes within the CPUs granted to the single Slurm task; the toolbox's
-distributed Hamiltonian application then uses those workers. Generated jobs
-print their resolved paths, resources, Julia version, and the failing shell
-line/command to the Slurm logs before exiting on an error.
+The helper then calls `sbatch` for every manifest entry in a loop. Since
+`sbatch` returns immediately, all data jobs are submitted asynchronously and
+can run independently after setup. Before each submission it skips an exact
+job-name match already shown by `squeue`, and skips a completed point when all
+required result files are present. Successful generated jobs write persistent
+markers under `hpc/completed/`. The timestamped submission CSV records setup,
+submitted, and skipped jobs. The plot job depends on setup, newly submitted
+jobs, and matching jobs that were already active.
+
+The batch shell invokes Julia directly. Inside Julia,
+`SlurmClusterManager.SlurmManager` launches the allocated Slurm tasks with the
+shared project and depot explicitly propagated, then loads the ED toolbox on
+every worker. `_bootstrap.jl` contains no cluster-launch logic and remains safe
+for ordinary local CLI runs. Generated jobs print their resolved paths,
+resources, Julia version, and the failing shell line/command to the Slurm logs.
 
 After an HPC-side failure, inspect the job state and corresponding logs with:
 

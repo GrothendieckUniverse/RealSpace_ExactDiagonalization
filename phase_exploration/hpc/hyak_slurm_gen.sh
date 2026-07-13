@@ -14,10 +14,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 JULIA_BIN="${JULIA_BIN:-/mmfs1/gscratch/cmt/hxd/opt/julia-1.12.6/bin/julia}"
 JULIA_DEPOT="${JULIA_DEPOT:-/mmfs1/gscratch/cmt/hxd/julia_depot}"
+JULIA_PROJECT_DIR="${JULIA_PROJECT_DIR:-${JULIA_DEPOT}/environments/v1.12}"
 ACCOUNT="cmt"
 PARTITION="ckpt-g2"
 WALLTIME="04:00:00"
 MAIL_USER="hxd.phys@outlook.com"
+REPO_REVISION="$(git -C "${REPO_DIR}" rev-parse --short=8 HEAD 2>/dev/null || printf 'working')"
+SETUP_JOB_NAME="tpp_env_${REPO_REVISION}"
 
 # One generated Slurm script is one independently resumable data point. The
 # generated submission helper calls `sbatch` in a loop; `sbatch` returns
@@ -109,8 +112,8 @@ write_header() {
 #SBATCH --job-name=${job_name}
 #SBATCH --time=${WALLTIME}
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=${CPUS}
+#SBATCH --ntasks-per-node=${CPUS}
+#SBATCH --cpus-per-task=1
 #SBATCH --mem=${MEM_GB}G
 #SBATCH --chdir=${REPO_DIR}
 #SBATCH --output=${HYAK_LOG_DIR}/${job_name}_%j.out
@@ -120,27 +123,26 @@ write_header() {
 
 set -Eeuo pipefail
 trap 'status=\$?; printf "ERROR: exit=%d line=%d command=%s\\n" "\${status}" "\${LINENO}" "\${BASH_COMMAND}" >&2; exit "\${status}"' ERR
-export JULIA_PROJECT="${REPO_DIR}"
+export JULIA_PROJECT="${JULIA_PROJECT_DIR}"
 export JULIA_DEPOT_PATH="${JULIA_DEPOT}"
 export JULIA_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
+export SLURM_EXPORT_ENV=ALL
+export SRUN_EXPORT_ENV=ALL
+export PHASE_EXPLORATION_REPO="${REPO_DIR}"
 DONE_DIR="${REPO_DIR}/phase_exploration/hpc/completed"
 DONE_FILE="\${DONE_DIR}/${job_name}.done"
 
 echo "Starting Slurm job \${SLURM_JOB_ID:-unknown} on \$(hostname) at \$(date --iso-8601=seconds)"
 echo "Repository: ${REPO_DIR}"
+echo "Julia project: ${JULIA_PROJECT_DIR}"
 echo "Julia: ${JULIA_BIN}"
-echo "Resources: tasks=\${SLURM_NTASKS:-unknown} cpus_per_task=\${SLURM_CPUS_PER_TASK:-unknown} memory=${MEM_GB}G"
+echo "Resources: tasks=\${SLURM_NTASKS:-unknown} memory=${MEM_GB}G"
 [[ -d "${REPO_DIR}" ]] || { echo "Missing repository: ${REPO_DIR}" >&2; exit 2; }
 [[ -f "${REPO_DIR}/Project.toml" ]] || { echo "Missing Project.toml under ${REPO_DIR}" >&2; exit 2; }
+[[ -f "${JULIA_PROJECT_DIR}/Project.toml" ]] || { echo "Missing shared Julia environment: ${JULIA_PROJECT_DIR}" >&2; exit 2; }
 [[ -x "${JULIA_BIN}" ]] || { echo "Julia is not executable: ${JULIA_BIN}" >&2; exit 2; }
 "${JULIA_BIN}" --version
-
-WORKERS=\$((SLURM_CPUS_PER_TASK - 1))
-JULIA_ARGS=(--project="${REPO_DIR}" --startup-file=no)
-if (( WORKERS > 0 )); then
-  JULIA_ARGS+=(-p "\${WORKERS}")
-fi
 
 mark_complete() {
   mkdir -p "\${DONE_DIR}"
@@ -151,6 +153,41 @@ mark_complete() {
 }
 EOF
 }
+
+cat > "${GENERATED_DIR}/setup_environment.sbatch" <<EOF
+#!/usr/bin/env bash
+#SBATCH --partition=${PARTITION}
+#SBATCH --account=${ACCOUNT}
+#SBATCH --export=ALL
+#SBATCH --job-name=${SETUP_JOB_NAME}
+#SBATCH --time=01:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=32G
+#SBATCH --chdir=${REPO_DIR}
+#SBATCH --output=${HYAK_LOG_DIR}/${SETUP_JOB_NAME}_%j.out
+#SBATCH --error=${HYAK_LOG_DIR}/${SETUP_JOB_NAME}_%j.err
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=${MAIL_USER}
+
+set -Eeuo pipefail
+trap 'status=\$?; printf "ERROR: exit=%d line=%d command=%s\n" "\${status}" "\${LINENO}" "\${BASH_COMMAND}" >&2; exit "\${status}"' ERR
+export JULIA_PROJECT="${JULIA_PROJECT_DIR}"
+export JULIA_DEPOT_PATH="${JULIA_DEPOT}"
+export PHASE_EXPLORATION_REPO="${REPO_DIR}"
+DONE_DIR="${REPO_DIR}/phase_exploration/hpc/completed"
+DONE_FILE="\${DONE_DIR}/${SETUP_JOB_NAME}.done"
+
+echo "Preparing ${JULIA_PROJECT_DIR} for repository ${REPO_DIR}"
+[[ -x "${JULIA_BIN}" ]] || { echo "Julia is not executable: ${JULIA_BIN}" >&2; exit 2; }
+"${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
+  "${REPO_DIR}/phase_exploration/bin/prepare_hpc_environment.jl"
+mkdir -p "\${DONE_DIR}"
+printf 'job_id=%s\ncompleted_at=%s\nrevision=%s\n' \
+  "\${SLURM_JOB_ID:-unknown}" "\$(date --iso-8601=seconds)" "${REPO_REVISION}" > "\${DONE_FILE}"
+echo "Environment marker: \${DONE_FILE}"
+EOF
 
 for geometry in "${SWEEP_GEOMETRIES[@]}"; do
   resource_for sweep "${geometry}"
@@ -165,7 +202,8 @@ for geometry in "${SWEEP_GEOMETRIES[@]}"; do
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_dense.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_metrics.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/run_metadata.csv
-"${JULIA_BIN}" "\${JULIA_ARGS[@]}" \
+"${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
+  "${REPO_DIR}/phase_exploration/bin/run_slurm_job.jl" \
   "${REPO_DIR}/phase_exploration/bin/run_sweep_point.jl" \
   --geometry "${geometry}" --x "${x}" --task all --mode "${MODE}" \
   --nev 10 --dense-resolution 101
@@ -188,7 +226,8 @@ for geometry in "${SWEEP_GEOMETRIES[@]}"; do
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/spatial_entanglement_spectrum.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/particle_entanglement_spectrum.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/summary.csv
-"${JULIA_BIN}" "\${JULIA_ARGS[@]}" \
+"${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
+  "${REPO_DIR}/phase_exploration/bin/run_slurm_job.jl" \
   "${REPO_DIR}/phase_exploration/bin/run_diagnostic_point.jl" \
   --phase "${phase}" --geometry "${geometry}" --mode "${MODE}" \
   --observables flow,pump,spatial_es,pes --zero-nev 10 --flow-nev 3 \
@@ -207,7 +246,8 @@ for geometry in "${GAP_GEOMETRIES[@]}"; do
     write_header "${job}" "tpp_cg_${geometry}_${phase_lower}"
     cat >> "${job}" <<EOF
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/charge_gap.csv
-"${JULIA_BIN}" "\${JULIA_ARGS[@]}" \
+"${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
+  "${REPO_DIR}/phase_exploration/bin/run_slurm_job.jl" \
   "${REPO_DIR}/phase_exploration/bin/run_charge_gap_point.jl" \
   --phase "${phase}" --geometry "${geometry}" --mode "${MODE}" --nev 2
 mark_complete
@@ -232,15 +272,16 @@ cat > "${GENERATED_DIR}/plot_results.sbatch" <<EOF
 #SBATCH --error=${HYAK_LOG_DIR}/tpp_plot_%j.err
 set -Eeuo pipefail
 trap 'status=\$?; printf "ERROR: exit=%d line=%d command=%s\\n" "\${status}" "\${LINENO}" "\${BASH_COMMAND}" >&2; exit "\${status}"' ERR
-export JULIA_PROJECT="${REPO_DIR}"
+export JULIA_PROJECT="${JULIA_PROJECT_DIR}"
 export JULIA_DEPOT_PATH="${JULIA_DEPOT}"
+export PHASE_EXPLORATION_REPO="${REPO_DIR}"
 DONE_DIR="${REPO_DIR}/phase_exploration/hpc/completed"
 DONE_FILE="\${DONE_DIR}/tpp_plot.done"
 echo "Starting plot job \${SLURM_JOB_ID:-unknown} on \$(hostname) at \$(date --iso-8601=seconds)"
 [[ -d "${REPO_DIR}" ]] || { echo "Missing repository: ${REPO_DIR}" >&2; exit 2; }
 [[ -x "${JULIA_BIN}" ]] || { echo "Julia is not executable: ${JULIA_BIN}" >&2; exit 2; }
 "${JULIA_BIN}" --version
-"${JULIA_BIN}" --project="${REPO_DIR}" --startup-file=no \
+"${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
   "${REPO_DIR}/phase_exploration/bin/plot_results.jl" --kind all
 mkdir -p "\${DONE_DIR}"
 printf 'job_id=%s\\ncompleted_at=%s\\n' \
@@ -306,6 +347,33 @@ job_ids=()
 submission_records=()
 skipped_active=0
 skipped_complete=0
+
+setup_job_path="${SCRIPT_DIR}/setup_environment.sbatch"
+[[ -f "${setup_job_path}" ]] || { echo "Missing ${setup_job_path}" >&2; exit 2; }
+setup_slurm_name="$(job_slurm_name "${setup_job_path}")"
+[[ -n "${setup_slurm_name}" ]] || { echo "Missing Slurm job name in ${setup_job_path}" >&2; exit 2; }
+setup_marker="${DONE_DIR}/${setup_slurm_name}.done"
+setup_dependency=""
+
+if [[ -n "${active_ids_by_name[${setup_slurm_name}]:-}" ]]; then
+  setup_dependency="${active_ids_by_name[${setup_slurm_name}]}"
+  add_dependency_ids "${setup_dependency}"
+  submission_records+=("setup_environment.sbatch,skipped_active,${setup_dependency//:/|}")
+  printf 'skipped   %-55s -> environment setup already active as %s\n' \
+    "setup_environment.sbatch" "${setup_dependency}"
+elif [[ -f "${setup_marker}" ]]; then
+  submission_records+=("setup_environment.sbatch,skipped_complete,environment_marker")
+  printf 'skipped   %-55s -> environment marker already exists\n' \
+    "setup_environment.sbatch"
+else
+  setup_submission="$(sbatch --parsable "${setup_job_path}")"
+  setup_dependency="${setup_submission%%;*}"
+  active_ids_by_name["${setup_slurm_name}"]="${setup_dependency}"
+  add_dependency_ids "${setup_dependency}"
+  submission_records+=("setup_environment.sbatch,submitted,${setup_dependency}")
+  printf 'submitted %-55s -> %s\n' "setup_environment.sbatch" "${setup_dependency}"
+fi
+
 for job_name in "${job_names[@]}"; do
   [[ -n "${job_name}" ]] || continue
   job_path="${SCRIPT_DIR}/${job_name}"
@@ -331,7 +399,11 @@ for job_name in "${job_names[@]}"; do
     continue
   fi
 
-  submission="$(sbatch --parsable "${job_path}")"
+  sbatch_args=(--parsable)
+  if [[ -n "${setup_dependency}" ]]; then
+    sbatch_args+=(--dependency="afterok:${setup_dependency}")
+  fi
+  submission="$(sbatch "${sbatch_args[@]}" "${job_path}")"
   job_id="${submission%%;*}"
   job_ids+=("${job_id}")
   add_dependency_ids "${job_id}"
@@ -372,6 +444,6 @@ EOF
 
 chmod +x "${GENERATED_DIR}/submit_all.sh"
 data_job_count="$(wc -l < "${DATA_MANIFEST}")"
-echo "Generated ${data_job_count} independent data jobs plus one dependent plot job in ${GENERATED_DIR}"
+echo "Generated one environment job, ${data_job_count} independent data jobs, and one dependent plot job in ${GENERATED_DIR}"
 echo "Review the collection, then submit ALL jobs asynchronously with:"
 echo "  ${GENERATED_DIR}/submit_all.sh"
