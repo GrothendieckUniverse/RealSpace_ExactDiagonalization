@@ -15,6 +15,23 @@ CFT gives an elegant continuum construction of the Laughlin state and its
 long-wavelength edge, but the PES counting also has a direct zero-mode and
 combinatorial derivation.
 
+### Three counting problems that must not be conflated
+
+This study encounters three numerically different sequences:
+
+| counting problem | what is counted | example in this study |
+|:--|:--|:--|
+| raw spatial Schmidt-rank ceiling | dimensions of ordinary fermionic Fock spaces on the two sides of the cut | `1,12,66,153,18,1` for `3x5` |
+| chiral-edge counting | bosonic edge-density excitations at successive excess momenta, within one fixed charge/topological sector | `1,1,2,3,5,7,11,...` |
+| particle-ES counting | bulk Laughlin quasihole states obeying the $(1,3)$ admissibility rule | 75 for `3x5`, 117 for `3x6` when $N_A=2$ |
+
+Only the second and third rows contain universal topological information.
+The first row is a kinematic upper bound: a generic fermionic state with the
+same particle number and bipartition can saturate it.  In particular,
+`1,12,66,153,18,1` is **not** a desired Laughlin edge sequence.  Sections
+3.2 and 3.3 derive the first two rows from their distinct generating
+functions.
+
 ## 1. Common language: what an entanglement spectrum is
 
 For any bipartition of a pure state,
@@ -362,31 +379,144 @@ the current output.
 
 ### 3.2 First derive the nonuniversal rank ceiling
 
-If A contains $M_A$ sites and B contains $M_B$ sites, then at fixed $N_A$
+#### General formula
+
+If A contains $M_A$ fermionic sites and B contains $M_B$ sites, the number of
+$N_A$-particle occupation states in A is
 
 $$
-\operatorname{rank}M^{(N_A)}
-\le
-\min\left\{
+\dim\mathcal H_A(N_A)=\binom{M_A}{N_A}.
+$$
+
+Since B contains $N_B=N-N_A$ particles,
+
+$$
+\dim\mathcal H_B(N-N_A)=\binom{M_B}{N-N_A}.
+$$
+
+The Schmidt coefficient matrix in this particle-number block is a rectangular
+linear map
+
+$$
+M^{(N_A)}:
+\mathcal H_B(N-N_A)\longrightarrow\mathcal H_A(N_A).
+$$
+
+A matrix cannot have rank larger than its number of rows or its number of
+columns.  Therefore
+
+$$
+\boxed{
+R_{\max}(N_A)
+=\min\left\{
 \binom{M_A}{N_A},
 \binom{M_B}{N-N_A}
+\right\}.}
+$$
+
+This is ordinary Hilbert-space counting.  It makes no use of Laughlin
+clustering, a Chern number, edge physics, or a CFT.
+
+The underlying generating function is also elementary.  A fermionic site is
+either empty or occupied, contributing $1+x$.  For $M$ sites,
+
+$$
+(1+x)^M
+=\sum_{n=0}^{M}\binom{M}{n}x^n.
+$$
+
+Thus $\binom{M}{n}$ is the coefficient of $x^n$ and counts $n$-particle Fock
+states.  Equivalently,
+
+$$
+R_{\max}(N_A)
+=\min\left\{
+[x^{N_A}](1+x)^{M_A},
+[x^{N-N_A}](1+x)^{M_B}
+\right\},
+$$
+
+where $[x^n]f(x)$ means the coefficient of $x^n$ in $f(x)$.
+
+#### Explicit derivation for `3x5`
+
+The cluster contains $3\times5\times2=30$ checkerboard sites and
+
+$$
+N=\frac{3\times5}{3}=5
+$$
+
+fermions.  The spatial strip used by the code has $M_A=12$ sites in A and
+$M_B=18$ sites in B.  For every possible $N_A$:
+
+| $N_A$ | $\dim\mathcal H_A=\binom{12}{N_A}$ | $\dim\mathcal H_B=\binom{18}{5-N_A}$ | $R_{\max}(N_A)$ |
+|--:|--:|--:|--:|
+| 0 | 1 | 8568 | 1 |
+| 1 | 12 | 3060 | 12 |
+| 2 | 66 | 816 | 66 |
+| 3 | 220 | 153 | 153 |
+| 4 | 495 | 18 | 18 |
+| 5 | 792 | 1 | 1 |
+
+Taking the smaller entry in each row gives
+
+$$
+\boxed{1,12,66,153,18,1.}
+$$
+
+The downloaded `3x5` FCI spatial spectrum has exactly these ranks.  This
+means every $N_A$ block saturates its generic rectangular-matrix rank bound.
+It is a useful implementation and normalization check, but it is not a
+topological edge-counting result: a generic five-fermion state on the same
+12+18 partition can give the same sequence.
+
+#### Explicit derivation for `3x6`
+
+Here there are $3\times6\times2=36$ sites and
+
+$$
+N=\frac{3\times6}{3}=6
+$$
+
+fermions.  The cut is symmetric, with $M_A=M_B=18$.  Therefore
+
+$$
+R_{\max}(N_A)
+=\min\left\{
+\binom{18}{N_A},
+\binom{18}{6-N_A}
 \right\}.
 $$
 
-This is ordinary Hilbert-space counting, not topological edge counting.
-For the downloaded FCI spectra:
+Evaluating it explicitly:
 
-| geometry | generic maximal ranks by increasing $N_A$ | observed nonzero ranks |
-|:--|:--|:--|
-| `3x5` | `1, 12, 66, 153, 18, 1` | `1, 12, 66, 153, 18, 1` |
-| `3x6` | `1, 18, 153, 816, 153, 18, 1` | `1, 18, 153, 676, 153, 18, 1` |
+| $N_A$ | $\dim\mathcal H_A=\binom{18}{N_A}$ | $\dim\mathcal H_B=\binom{18}{6-N_A}$ | $R_{\max}(N_A)$ |
+|--:|--:|--:|--:|
+| 0 | 1 | 18564 | 1 |
+| 1 | 18 | 8568 | 18 |
+| 2 | 153 | 3060 | 153 |
+| 3 | 816 | 816 | 816 |
+| 4 | 3060 | 153 | 153 |
+| 5 | 8568 | 18 | 18 |
+| 6 | 18564 | 1 | 1 |
 
-Thus the `3x5` ranks simply saturate the generic matrix-rank bound.  They are
-not a universal Laughlin sequence.  The central `3x6` block has reduced rank,
-which reflects structure or exact/numerical support of that finite-size
-state, but `676` by itself has no standard topological interpretation.  The
-reflection symmetry of the `3x6` sequence under $N_A\leftrightarrow6-N_A$
-is expected from its equal A/B partition.
+The maximal-rank sequence is therefore
+
+$$
+\boxed{1,18,153,816,153,18,1.}
+$$
+
+The reflection under $N_A\leftrightarrow6-N_A$ follows simply from the equal
+18+18 bipartition.  The downloaded data instead contain
+
+$$
+1,18,153,676,153,18,1.
+$$
+
+Only the central block does not saturate the kinematic ceiling:
+$676<816$.  This can reflect exact wavefunction structure, symmetry-imposed
+relations, coefficient thresholding, or other finite-size details.  The
+number 676 by itself has no established universal Laughlin interpretation.
 
 ### 3.3 Where the edge-CFT counting comes from
 
@@ -450,8 +580,32 @@ $$
 \Delta K=\sum_{n\ge1}n r_n.
 $$
 
-Counting descendants at a given $\Delta K$ is therefore exactly the integer
-partition problem.  Its generating function is
+Physically, $a_{-n}$ creates a Fourier component of the edge-density or edge-
+shape deformation with wavelength momentum $n$.  Since this excitation is
+bosonic, the same mode can be occupied zero, one, two, or arbitrarily many
+times.  At small $\Delta K$, the states are especially transparent:
+
+| $\Delta K$ | integer partitions | edge states | count |
+|--:|:--|:--|--:|
+| 0 | $0$ | $|Q\rangle$ | 1 |
+| 1 | $1$ | $a_{-1}|Q\rangle$ | 1 |
+| 2 | $2$, $1+1$ | $a_{-2}|Q\rangle$, $(a_{-1})^2|Q\rangle$ | 2 |
+| 3 | $3$, $2+1$, $1+1+1$ | $a_{-3}|Q\rangle$, $a_{-2}a_{-1}|Q\rangle$, $(a_{-1})^3|Q\rangle$ | 3 |
+| 4 | $4$, $3+1$, $2+2$, $2+1+1$, $1+1+1+1$ | five corresponding oscillator products | 5 |
+
+Thus counting descendants at fixed $\Delta K$ is exactly the integer-
+partition problem.
+
+#### Obtaining the sequence from the generating function
+
+For one momentum-$n$ oscillator, the allowed occupations contribute
+
+$$
+1+q^n+q^{2n}+q^{3n}+\cdots=\frac{1}{1-q^n}.
+$$
+
+The exponent records the momentum carried by that mode.  All positive-$n$
+modes are independent, so their generating functions multiply:
 
 $$
 Z_{\rm edge}(q)
@@ -460,7 +614,22 @@ Z_{\rm edge}(q)
 =1+q+2q^2+3q^3+5q^4+7q^5+11q^6+\cdots.
 $$
 
-Hence the familiar single-edge sequence
+For example, the coefficient of $q^3$ has three contributions:
+
+$$
+q^3,\qquad q^2q,\qquad q q q,
+$$
+
+coming respectively from one $n=3$ boson, one $n=2$ plus one $n=1$ boson,
+or three $n=1$ bosons.  These are the three partitions of 3.  In general,
+
+$$
+Z_{\rm edge}(q)
+=\sum_{\Delta K=0}^{\infty}p(\Delta K)q^{\Delta K},
+$$
+
+where $p(\Delta K)$ is the integer-partition number.  Hence the familiar
+single-edge sequence
 
 $$
 1,1,2,3,5,7,11,\ldots
@@ -468,6 +637,83 @@ $$
 
 is $p(\Delta K)$, the number of integer partitions of the momentum.  It is
 not a sequence of total Schmidt ranks in successive $N_A$ blocks.
+
+The same result appears in the $U(1)$ chiral-boson CFT character.  Within a
+fixed charge sector $Q$,
+
+$$
+\chi_Q(q)
+=q^{h_Q-c/24}\prod_{n=1}^{\infty}\frac1{1-q^n}
+=\frac{q^{h_Q}}{\eta(q)},
+$$
+
+where $h_Q$ shifts the momentum of the primary state, $c=1$, and
+
+$$
+\eta(q)=q^{1/24}\prod_{n=1}^{\infty}(1-q^n)
+$$
+
+is the Dedekind eta function.  The prefactor changes the starting momentum
+of the tower but not the descendant multiplicities.  This is why every
+single-component Laughlin edge has the oscillator sequence
+$1,1,2,3,5,7,11,\ldots$: changing $m$ changes the charge sectors and primary
+scaling dimensions, but not the counting of one chiral boson's descendants.
+
+#### Direct Laughlin-wavefunction derivation without CFT
+
+The edge modes can also be constructed directly.  Define the symmetric
+power-sum polynomial
+
+$$
+p_n(z_1,\ldots,z_N)=\sum_{i=1}^{N}z_i^n.
+$$
+
+Multiplying the Laughlin state by $p_n$ deforms its edge and adds angular
+momentum $n$ without changing the bulk clustering zeros.  A general edge
+wavefunction is therefore schematically
+
+$$
+\Psi_{\{r_n\}}
+=\left[\prod_{n\ge1}p_n^{r_n}\right]\Psi_{\rm Laughlin},
+\qquad
+\Delta L=\sum_{n\ge1}n r_n.
+$$
+
+Counting independent products of the $p_n$ at fixed $\Delta L$ gives the
+same integer partitions.  The CFT oscillator $a_{-n}$ is the field-theory
+language for this microscopic edge-density deformation; the partition
+counting itself does not require starting from CFT.
+
+At finite particle number, sufficiently large $\Delta L$ eventually produces
+linear relations or truncations among symmetric polynomials, and a small
+entanglement region can couple the two virtual edges.  Consequently, the
+partition sequence is expected most cleanly at low $\Delta K$ before these
+finite-size effects enter—not as an unrestricted count of every level in the
+finite Hilbert space.
+
+#### Where the sequence should appear in an entanglement plot
+
+The sequence is obtained **within one fixed $N_A$ and one fixed topological
+or edge-charge sector**, while varying momentum parallel to the cut.  One
+must:
+
+1. choose a fixed $N_A$ block;
+2. block-diagonalize $\rho_A$ by the conserved momentum $K_\parallel$ along
+   the boundary;
+3. identify the edge-vacuum momentum $K_0$;
+4. define $\Delta K=K_\parallel-K_0$ with the appropriate cyclic convention;
+5. count only the low-lying entanglement branch below a stable gap at each
+   $\Delta K$.
+
+For a single isolated edge, that table should begin
+
+| $\Delta K$ | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+|--:|--:|--:|--:|--:|--:|--:|--:|
+| low edge levels | 1 | 1 | 2 | 3 | 5 | 7 | 11 |
+
+It is therefore conceptually wrong to read the edge sequence by moving from
+the $N_A=0$ block to $N_A=1$, then $N_A=2$, and so forth.  Those total block
+ranks are governed first by the binomial ceilings derived in Section 3.2.
 
 Why should a spatial entanglement spectrum see this?  A local cut through a
 gapped state creates virtual boundary degrees of freedom, and
@@ -496,7 +742,38 @@ Therefore even this convolution should not be applied blindly.  One must
 resolve momentum parallel to the cut and identify which edge sectors are
 being compared.
 
-### 3.5 Non-CFT understanding of the spatial counting
+### 3.5 Why the two generating functions count different things
+
+The contrast can be summarized directly from the factors being multiplied.
+
+For a localized fermionic site, Pauli exclusion allows occupation zero or
+one:
+
+$$
+1+x.
+$$
+
+For $M$ sites this becomes $(1+x)^M$, whose coefficients are binomial Fock-
+space dimensions.  Combining the A and B dimensions gives the raw Schmidt-
+rank ceilings such as `1,12,66,153,18,1`.
+
+For a bosonic edge-density mode of momentum $n$, occupation may be zero, one,
+two, or arbitrarily large:
+
+$$
+1+q^n+q^{2n}+\cdots=\frac1{1-q^n}.
+$$
+
+Multiplying over all $n>0$ produces integer partitions and therefore
+`1,1,2,3,5,7,11,...`.  The variable $x$ in the first problem records particle
+number, whereas $q$ in the second records excess edge momentum.
+
+The PES quasihole count is a third problem again: it counts cyclic binary
+root configurations subject to the $(1,3)$ admissibility constraint, as
+derived in Section 2.6.  Its 75 and 117 levels must not be inferred from
+either of the two generating functions above.
+
+### 3.6 Non-CFT understanding of the spatial counting
 
 The essential reasoning can be stated without constructing the bulk
 wavefunction from a CFT:
@@ -523,12 +800,17 @@ change with the partition and microscopic deformation even while the bulk
 phase stays fixed.  Edge-like counting below a stable entanglement gap is
 strong supporting evidence, not a standalone definition of the phase.
 
-### 3.6 What the present spatial CSV can and cannot establish
+### 3.7 What the present spatial CSV can and cannot establish
 
 The current CSV resolves only $N_A$.  It does **not** store momentum
 $K_\parallel$ along the cut, so it cannot organize levels by $\Delta K$ and
 cannot test either the single-edge partition sequence or the appropriate
-two-edge towers.  Its present uses are limited to:
+two-edge towers.  In the current plot, the number of dots above a given
+$N_A$ is the raw Schmidt rank of that entire block.  It should be compared
+with the binomial ceiling $R_{\max}(N_A)$, not with
+$p(\Delta K)=1,1,2,3,5,\ldots$.
+
+Its present uses are limited to:
 
 - normalization and Schmidt-block consistency;
 - particle-number distribution across the cut;
@@ -543,6 +825,12 @@ implementation to:
 3. choose or construct minimally entangled ground states for that cut;
 4. identify a stable low branch and compare its relative-momentum counting
    with the one- or two-edge $U(1)_3$ prediction appropriate to the geometry.
+
+After that extension, the edge-counting comparison would be performed
+vertically within a fixed $N_A$ block: choose its lowest edge tower, move
+through $\Delta K=0,1,2,\ldots$, and count levels below the entanglement gap.
+One would still not compare the **total** number of levels in successive
+$N_A$ blocks with the partition-number sequence.
 
 Until then, the momentum-resolved PES is the sharper counting diagnostic in
 this repository.
