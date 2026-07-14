@@ -154,6 +154,43 @@ function _best_phase_permutation(raw, prev::Vector{Float64})::Vector{Int}
     return best
 end
 
+"Normalize a low-energy manifold to explicit `(sector, level)` state specifications."
+function _normalize_manifold_state_specs(sector_labels, nev_per_sector::Int, manifold_states)
+    nev_per_sector > 0 || error("nev_per_sector must be positive.")
+    is_identity = sector_labels == :identity
+    base_labels = is_identity ? [:identity] :
+                  sector_labels isa Tuple ? [Tuple(Int.(sector_labels))] :
+                  [Tuple(Int.(label)) for label in sector_labels]
+
+    specs = if manifold_states === nothing
+        [(sector=label, level=level) for label in base_labels for level in 1:nev_per_sector]
+    else
+        is_identity && error("Explicit manifold_states are only supported for symmetry-sector ED.")
+        normalized = NamedTuple[]
+        for state in manifold_states
+            sector_raw = hasproperty(state, :sector) ? getproperty(state, :sector) : state[1]
+            level_raw = hasproperty(state, :level) ? getproperty(state, :level) : state[2]
+            sector = Tuple(Int.(sector_raw))
+            level = Int(level_raw)
+            level > 0 || error("Manifold levels must be positive; got $level in sector $sector.")
+            sector in base_labels || error(
+                "Manifold state ($sector, level $level) is absent from sector_labels=$base_labels.")
+            push!(normalized, (sector=sector, level=level))
+        end
+        isempty(normalized) && error("manifold_states must not be empty.")
+        length(unique((state.sector, state.level) for state in normalized)) == length(normalized) ||
+            error("manifold_states contains duplicate (sector, level) entries.")
+        normalized
+    end
+
+    labels = unique(state.sector for state in specs)
+    required_levels = Dict{Any,Int}()
+    for state in specs
+        required_levels[state.sector] = max(get(required_levels, state.sector, 0), state.level)
+    end
+    return labels, specs, required_levels, is_identity
+end
+
 # ═══════════════════════════════════════════════════════════════════════════
 # flux_charge_pump — scan many-body polarization P(θ)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -173,7 +210,10 @@ sectors, and unwraps the phase branches.
     - `flux_direction::Int=1`
     - `polarization_direction::Int`: default transverse to flux
     - `twisted_phases_over_2π_list::Vector{Float64}=collect(range(0.0, 1.0; length=9))`
-    - `nev_per_sector::Int=1`: low-lying states per sector
+    - `nev_per_sector::Int=1`: low-lying states per sector for the legacy
+      one-size-fits-all manifold specification
+    - `manifold_states=nothing`: optional explicit `(sector, level)` states;
+      required when multiple manifold states occupy the same momentum sector
     - `include_sublattice::Bool=true`
     - `checkpoint_dir::String=\"checkpoints\"`: directory for per-θ checkpoints
     - `fig_path::Union{Nothing,String}=nothing`
@@ -189,23 +229,25 @@ function flux_charge_pump(
     polarization_direction::Int=_default_polarization_direction(model.lattice.dim, flux_direction),
     twisted_phases_over_2π_list::Vector{Float64}=collect(range(0.0, 1.0; length=9)),
     nev_per_sector::Int=1,
+    manifold_states=nothing,
     include_sublattice::Bool=true,
     checkpoint_dir::String="checkpoints",
     fig_path::Union{Nothing,String}=nothing,
     overwrite::Bool=false,
 )
-    # ── Resolve sector labels ──
-    is_identity = sector_labels == :identity
-    labels = is_identity ? [:identity] :
-             sector_labels isa Tuple ? [Tuple(Int.(sector_labels))] :
-             [Tuple(Int.(l)) for l in sector_labels]
+    # ── Resolve every state in the low-energy manifold explicitly.  This is
+    # essential when, e.g., three FCI states are levels 1:3 of one momentum
+    # sector rather than level 1 of three distinct sectors.
+    labels, state_specs, required_levels, is_identity =
+        _normalize_manifold_state_specs(sector_labels, nev_per_sector, manifold_states)
 
     dim = model.lattice.dim
     1 <= flux_direction <= dim || error("flux_direction must be in 1:$dim.")
     1 <= polarization_direction <= dim || error("polarization_direction must be in 1:$dim.")
 
-    nstates = length(labels) * nev_per_sector
-    energies = fill(NaN, length(twisted_phases_over_2π_list), length(labels), nev_per_sector)
+    nstates = length(state_specs)
+    max_level = maximum(values(required_levels))
+    energies = fill(NaN, length(twisted_phases_over_2π_list), length(labels), max_level)
     polarization_eigenvalues = Matrix{ComplexF64}(undef, length(twisted_phases_over_2π_list), nstates)
 
     # ── Ensure all per-θ ED checkpoints exist (shared with spectrum flow) ──
@@ -215,7 +257,7 @@ function flux_charge_pump(
         symmetry_group=build_translation_group(model.lattice, flux0))
 
     checkpoint_paths = ed_scan!(init_ed_data;
-        nev=max(nev_per_sector, 2),  # need at least 1 eigenvector
+        nev=max(max_level, 2),
         mode=:matrix,
         twisted_phases_over_2π_list=twisted_phases_over_2π_list,
         flux_direction=flux_direction,
@@ -237,10 +279,14 @@ function flux_charge_pump(
                 continue
             end
             vecs = ed_data.ed_scan_res[irrep_idx][2]
-            nv = min(size(vecs, 2), nev_per_sector)
+            nv = required_levels[label]
+            size(vecs, 2) >= nv || error(
+                "Sector $label in $ckpt_path has $(size(vecs, 2)) eigenvectors; need $nv.")
             eigvecs[label] = vecs[:, 1:nv]
             vals = ed_data.ed_scan_res[irrep_idx][1]
-            energies[iθ, ilabel, 1:min(length(vals), nev_per_sector)] .= vals[1:min(length(vals), nev_per_sector)]
+            length(vals) >= nv || error(
+                "Sector $label in $ckpt_path has $(length(vals)) eigenvalues; need $nv.")
+            energies[iθ, ilabel, 1:nv] .= vals[1:nv]
 
             irrep = ed_data.irrep_list[irrep_idx]
             bases[label] = build_symmetry_sector_basis(ed_data.orbit_catalog, irrep)
@@ -253,21 +299,18 @@ function flux_charge_pump(
         )
         P = zeros(ComplexF64, nstates, nstates)
 
-        for (ito_label, label_to) in enumerate(labels)
-            basis_to = bases[label_to]
-            vecs_to = eigvecs[label_to]
-            for (ifrom_label, label_from) in enumerate(labels)
-                basis_from = bases[label_from]
-                vecs_from = eigvecs[label_from]
-                Ublock = _position_operator_matrix(
-                    basis_to, basis_from, site_phases, model.particle_statistics,
-                )
-                for lev_to in 1:size(vecs_to, 2), lev_from in 1:size(vecs_from, 2)
-                    row = (ito_label - 1) * nev_per_sector + lev_to
-                    col = (ifrom_label - 1) * nev_per_sector + lev_from
-                    P[row, col] = dot(vecs_to[:, lev_to], Ublock * vecs_from[:, lev_from])
-                end
+        position_blocks = Dict{Tuple{Any,Any},Any}()
+        for (row, state_to) in enumerate(state_specs), (col, state_from) in enumerate(state_specs)
+            label_to, lev_to = state_to.sector, state_to.level
+            label_from, lev_from = state_from.sector, state_from.level
+            block_key = (label_to, label_from)
+            Ublock = get!(position_blocks, block_key) do
+                _position_operator_matrix(
+                    bases[label_to], bases[label_from], site_phases,
+                    model.particle_statistics)
             end
+            P[row, col] = dot(eigvecs[label_to][:, lev_to],
+                Ublock * eigvecs[label_from][:, lev_from])
         end
 
         ev = eigen(P).values
@@ -292,7 +335,9 @@ function flux_charge_pump(
             title="$(model.lattice.sample_size)-sample Charge Pump — sectors: $sectors_str"
         )
         for b in 1:nstates
-            lbl = is_identity ? "branch $b" : "sector $(repr(labels[mod1(b, length(labels))])) branch $(div(b-1, length(labels))+1)"
+            state = state_specs[b]
+            lbl = is_identity ? "branch $b" :
+                  "sector $(repr(state.sector)), level $(state.level)"
             lines!(ax, twisted_phases_over_2π_list, pumped_charge_trajectories[:, b];
                 color=Makie.Cycled(b), linewidth=2, label=lbl)
             scatter!(ax, twisted_phases_over_2π_list, pumped_charge_trajectories[:, b];
@@ -303,10 +348,11 @@ function flux_charge_pump(
         @info "charge pump plot saved to `$fig_path`"
     end
 
-    @info "Pumped Charges for sectors $sector_labels: $pumped_charges"
+    @info "Pumped charges for manifold states" state_specs pumped_charges
 
     res = (; twisted_phases_over_2π_list, energies, sector_labels=labels, flux_direction,
-        polarization_direction, nev_per_sector, polarization_eigenvalues,
+        polarization_direction, nev_per_sector=max_level, manifold_states=state_specs,
+        polarization_eigenvalues,
         polarizations, pumped_charge_trajectories, pumped_charges,
         include_sublattice, is_identity, fig_path, checkpoint_paths)
 

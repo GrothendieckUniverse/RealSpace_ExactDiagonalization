@@ -56,6 +56,14 @@ function lowest_unique_sectors(table; count::Int=3)
     return sectors
 end
 
+"Return the globally lowest `count` eigenstates, retaining both sector and in-sector level."
+function lowest_manifold_states(table; count::Int=3)
+    count > 0 || error("Manifold size must be positive; got $count.")
+    length(table) >= count || error(
+        "Requested a $count-state manifold, but the spectrum contains only $(length(table)) states.")
+    return table[1:count]
+end
+
 function all_sector_labels(ed_data)
     return [Tuple(Int.(irrep.label)) for irrep in ed_data.irrep_list]
 end

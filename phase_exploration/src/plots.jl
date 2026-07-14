@@ -211,6 +211,14 @@ function group_rows(rows, fields::Tuple)
     return groups
 end
 
+"Torus counting of `(1,m)`-admissible configurations for a particle cut."
+function torus_admissible_count(n_orbitals::Int, n_particles::Int; m::Int=3)
+    n_particles == 0 && return 1
+    n_orbitals >= m * n_particles || return 0
+    return (n_orbitals * binomial(n_orbitals - (m - 1) * n_particles - 1,
+        n_particles - 1)) ÷ n_particles
+end
+
 function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOMETRIES)
     outputs = String[]
     for phase_symbol in phases, sample in samples
@@ -287,12 +295,30 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
             index = Dict(k => i for (i, k) in enumerate(momenta))
             x = [index[(csv_int(row.k1), csv_int(row.k2))] for row in rows]
             y = [csv_float(row.entanglement_energy) for row in rows]
-            fig = Figure(size=(1000, 560))
+            # Keep momentum labels legible on geometries with many sectors.
+            fig = Figure(size=(max(1000, 80 * length(momenta)), 600))
             ax = Axis(fig[1, 1]; xlabel="subsystem momentum sector", ylabel="ξ = -log(λ)",
                 title="$title_prefix momentum-resolved PES",
                 xticks=(1:length(momenta), ["($(k[1]),$(k[2]))" for k in momenta]),
                 xticklabelrotation=π / 3)
             scatter!(ax, x, y; color=y, colormap=:viridis, markersize=7)
+            sorted_y = sort(y)
+            if length(sorted_y) >= 2
+                gaps = diff(sorted_y)
+                gap_index = argmax(gaps)
+                gap_cut = (sorted_y[gap_index] + sorted_y[gap_index + 1]) / 2
+                gap_label = "largest gap: $gap_index levels below"
+                summary_path = joinpath(datadir, "summary.csv")
+                if phase_symbol == :FCI && isfile(summary_path)
+                    summary = read_simple_csv(summary_path)[1]
+                    n_a = csv_int(summary.PES_NA)
+                    expected = torus_admissible_count(prod(sample), n_a; m=3)
+                    gap_label *= "; (1,3) expected $expected"
+                end
+                hlines!(ax, [gap_cut]; color=:firebrick3, linestyle=:dash,
+                    linewidth=1.8, label=gap_label)
+                axislegend(ax; position=:rt)
+            end
             path = joinpath(outdir, "particle_entanglement_spectrum.svg")
             save(path, fig)
             push!(outputs, path)
@@ -334,7 +360,10 @@ function plot_charge_gap_results(; phases=[:AHC, :FCI, :CDW])
             title="$(String(phase)) charge-gap finite-size scaling")
         line_x = collect(range(0.0, maximum(x); length=200))
         lines!(ax, line_x, intercept .+ slope .* line_x; color=:firebrick3, linewidth=2,
-            label=@sprintf("linear: Δ∞ = %.6f", intercept))
+            linestyle=:dash, label=@sprintf("linear extrapolation: Δ∞ = %.6f", intercept))
+        order = sortperm(x)
+        lines!(ax, x[order], y[order]; color=:royalblue3, linewidth=1.8,
+            label="finite-size data")
         scatter!(ax, x, y; color=:royalblue3, markersize=12)
         scatter!(ax, [0.0], [intercept]; color=:black, marker=:diamond, markersize=14)
         for i in eachindex(x)

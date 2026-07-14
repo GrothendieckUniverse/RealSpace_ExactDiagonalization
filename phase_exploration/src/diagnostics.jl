@@ -96,11 +96,12 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     observables::Vector{Symbol}=[:flow, :pump, :spatial_es, :pes],
     zero_nev::Int=10,
     flow_nev::Int=3,
-    flow_flux_values::Vector{Float64}=collect(range(0.0, 3.0; length=25)),
+    flow_flux_values::Vector{Float64}=collect(range(0.0, 3.0; length=49)),
     pump_flux_values::Vector{Float64}=collect(range(0.0, 1.0; length=17)),
     flux_direction::Int=1,
     polarization_direction::Int=2,
     n_particles_a::Int=2,
+    refresh::Bool=false,
     overwrite::Bool=false,
 )
     valid = Set([:flow, :pump, :spatial_es, :pes])
@@ -118,7 +119,9 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
         :spatial_es => joinpath(outdir, "spatial_entanglement_spectrum.csv"),
         :pes => joinpath(outdir, "particle_entanglement_spectrum.csv"),
     )
-    todo = [obs for obs in observables if overwrite || !isfile(output_for[obs])]
+    # `refresh` rebuilds derived CSVs while reusing compatible ED checkpoints.
+    # `overwrite` additionally discards and recomputes those checkpoints.
+    todo = [obs for obs in observables if refresh || overwrite || !isfile(output_for[obs])]
     if isempty(todo) && isfile(joinpath(outdir, "summary.csv")) &&
        isfile(joinpath(outdir, "zero_flux_spectrum.csv"))
         @info "Requested diagnostics already complete; skipping" phase sample outdir
@@ -129,8 +132,9 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     ed_data = scan_with_resume!(ed_data; nev=zero_nev, mode=mode,
         checkpoint_path=ckpt_zero, overwrite=overwrite)
     table = spectrum_table(ed_data)
-    manifold = lowest_unique_sectors(table; count=nmanifold)
-    length(manifold) == nmanifold || error("Could not find $nmanifold distinct low-energy sectors.")
+    manifold_states = lowest_manifold_states(table; count=nmanifold)
+    manifold_sectors = unique(row.sector for row in manifold_states)
+    manifold_nev = maximum(row.level for row in manifold_states)
     all_sectors = all_sector_labels(ed_data)
     write_spectrum_csv(joinpath(outdir, "zero_flux_spectrum.csv"), table, sample, xvalue)
 
@@ -141,7 +145,7 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     if !isempty(union_flux)
         paths = ensure_flux_checkpoints(model, filling, union_flux;
             flux_direction=flux_direction,
-            nev=max(flow_nev, 2),
+            nev=max(flow_nev, manifold_nev, 2),
             mode=mode,
             checkpoint_dir=ckpt_flux,
             sectors=all_sectors,
@@ -161,12 +165,12 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     if :pump in todo
         # The checkpoints above are solver-mode agnostic. The toolbox pump call
         # sees complete files and only performs the polarization projection.
-        pump = flux_charge_pump(model, manifold;
+        pump = flux_charge_pump(model, manifold_sectors;
             filling_fraction=filling,
             flux_direction=flux_direction,
             polarization_direction=polarization_direction,
             twisted_phases_over_2π_list=pump_flux_values,
-            nev_per_sector=1,
+            manifold_states=manifold_states,
             checkpoint_dir=ckpt_flux,
             overwrite=false)
         write_pump_csv(output_for[:pump], pump)
@@ -191,9 +195,10 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     if :pes in todo
         n_particles_a <= n_particles ||
             error("PES N_A=$n_particles_a exceeds total N=$n_particles.")
-        pes = particle_entanglement_spectrum(model, manifold;
+        pes = particle_entanglement_spectrum(model, manifold_sectors;
             n_particles_a=n_particles_a,
             filling_fraction=filling,
+            manifold_states=manifold_states,
             ed_mode=mode,
             ed_data=ed_data)
         write_pes_csv(output_for[:pes], pes)
@@ -234,13 +239,14 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
 
     ensure_parent(joinpath(outdir, "summary.csv"))
     open(joinpath(outdir, "summary.csv"), "w") do io
-        println(io, "phase,L1,L2,n_sites,n_particles,tpp_numerator,tpp_actual,solver_mode,manifold_size,manifold_sectors,pumped_charge_sum,pumped_charge_abs_sum,spatial_cut_direction,spatial_cut_cells,PES_NA,PES_levels,PES_largest_gap,PES_levels_below_largest_gap")
-        sector_text = join(["$(k[1]):$(k[2])" for k in manifold], ';')
-        @printf(io, "%s,%d,%d,%d,%d,%.16g,%.16g,%s,%d,%s,%.16g,%.16g,%d,%d,%d,%d,%.16g,%d\n",
+        println(io, "phase,L1,L2,n_sites,n_particles,tpp_numerator,tpp_actual,solver_mode,manifold_size,manifold_sectors,pumped_charge_sum,pumped_charge_abs_sum,spatial_cut_direction,spatial_cut_cells,PES_NA,PES_levels,PES_largest_gap,PES_levels_below_largest_gap,manifold_state_levels")
+        sector_text = join(["$(row.sector[1]):$(row.sector[2])" for row in manifold_states], ';')
+        state_text = join(["$(row.sector[1]):$(row.sector[2]):$(row.level)" for row in manifold_states], ';')
+        @printf(io, "%s,%d,%d,%d,%d,%.16g,%.16g,%s,%d,%s,%.16g,%.16g,%d,%d,%d,%d,%.16g,%d,%s\n",
             phase, sample[1], sample[2], model.lattice.n_site, n_particles,
             xvalue, actual_tpp(xvalue), mode, nmanifold, sector_text,
             pump_sum_existing, pump_abs_sum_existing, cut_direction, cut_cell, n_particles_a,
-            npes_existing, pes_summary.largest_gap, pes_summary.levels_below)
+            npes_existing, pes_summary.largest_gap, pes_summary.levels_below, state_text)
     end
     @info "Completed phase diagnostics" phase sample xvalue tpp_actual=actual_tpp(xvalue) observables outdir
     return outdir

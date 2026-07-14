@@ -20,9 +20,9 @@ and the three common deep-phase diagnostic/scaling points:
 
 | phase | numerator `x` | physical `t''` | default manifold |
 |:--|--:|--:|--:|
-| AHC | `-3.0` | `-0.6213203436` | three lowest distinct sectors |
-| FCI | `-1.0` | `-0.2071067812` | three lowest distinct sectors |
-| CDW | `1.5` | `0.3106601718` | three lowest distinct sectors |
+| AHC | `-3.0` | `-0.6213203436` | three lowest eigenstates |
+| FCI | `-1.0` | `-0.2071067812` | three lowest eigenstates |
+| CDW | `1.5` | `0.3106601718` | three lowest eigenstates |
 
 These defaults encode the archived small-cluster evidence; they are not hard
 claims about the larger sizes. If the new sweep moves a large-gap plateau,
@@ -31,11 +31,11 @@ with `--overwrite true` (or remove the corresponding old result/checkpoint
 directories). Checkpoint loading validates the model, filling, and flux and
 will refuse incompatible cached states.
 
-The default solver is explicit sparse-matrix ED for every geometry from 3x4
-through 3x7, including diagnostics and charge-gap jobs. On Hyak, Hamiltonian
-matrix construction is distributed across one-thread Julia workers. The 4x6
-geometry uses matrix-free ED in one multithreaded Julia process. CLI
-`--mode matrix` or `--mode matrixfree` always overrides this policy.
+The default solver is explicit sparse-matrix ED for every active geometry from
+3x3 through 3x7. On Hyak, Hamiltonian matrix construction is distributed
+across one-thread Julia workers. Sweeps and diagnostics currently stop at 3x6;
+3x7 is retained only for charge-gap scaling. CLI `--mode matrix` or
+`--mode matrixfree` always overrides this policy.
 
 ## Local jobs
 
@@ -60,9 +60,10 @@ julia --project=. phase_exploration/bin/run_diagnostic_point.jl \
 ```
 
 This performs a zero-flux all-sector scan, chooses the configured number of
-lowest distinct sectors, and generates:
+globally lowest eigenstates (retaining both momentum sector and in-sector
+level), and generates:
 
-- all-momentum-sector spectrum flow over three flux quanta;
+- all-momentum-sector spectrum flow over three flux quanta (49 points);
 - the manifold charge pump over one flux quantum;
 - a spatial/orbital cut ES for the absolute ground state;
 - the Li-Haldane/Regnault-Bernevig momentum-resolved particle ES of the
@@ -70,7 +71,13 @@ lowest distinct sectors, and generates:
 
 Individual diagnostics can be split across jobs, for example
 `--observables flow,pump` or `--observables spatial_es,pes`. Flux and zero-flux
-checkpoints are shared and resumed sector by sector.
+checkpoints are shared and resumed sector by sector. Use `--refresh true` to
+rebuild derived CSVs while retaining compatible checkpoints; `--overwrite
+true` also recomputes the checkpoints.
+
+See [`entanglement_counting_notes.md`](entanglement_counting_notes.md) for the
+`(1,3)` PES derivation, geometry-by-geometry counting, and an explanation of
+what the current spatial ES can and cannot establish.
 
 One finite-size charge-gap datum is:
 
@@ -80,9 +87,10 @@ julia --project=. phase_exploration/bin/run_charge_gap_point.jl \
 ```
 
 It scans every momentum sector at `N-1`, `N`, and `N+1`, then stores
-`Delta_c = E0(N+1) + E0(N-1) - 2 E0(N)`. Run it for 3x4, 3x5, 3x6, 3x7, and
-4x6 in each phase. The plotter fits each phase separately against `1/N_sites`
-and records the `1/N_sites -> 0` intercept and RMS residual.
+`Delta_c = E0(N+1) + E0(N-1) - 2 E0(N)`. Run it for 3x3, 3x4, 3x5, 3x6, and
+3x7 in each phase. The plotter connects the raw sizes, draws the independent
+linear extrapolation as a dashed line, and records the `1/N_sites -> 0`
+intercept and RMS residual.
 
 After any subset of data exists, render all available figures without further
 diagonalization:
@@ -188,8 +196,7 @@ sacct -j JOB_ID --format=JobID,JobName,State,ExitCode,Elapsed,MaxRSS,ReqMem
 ls phase_exploration/hpc/logs/
 ```
 
-The 4x6 PES is exceptionally memory intensive in the current predefined
-toolbox because it explicitly expands the many-body state and constructs a
-dense particle-partition matrix. The generated request is therefore large,
-but queue/node limits may require running `flow,pump` first and the two ES
-observables in separate high-memory jobs.
+The generated diagnostic jobs use a versioned protocol marker. This forces the
+corrected `(sector, level)` manifold selection and denser flow output to run
+once even when older CSVs already exist; subsequent submissions skip the
+versioned completed result normally.

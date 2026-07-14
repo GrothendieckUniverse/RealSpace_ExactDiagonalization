@@ -20,8 +20,8 @@ const BASE_PARAMS = Dict{String,Float64}(
 
 # A uniform extensive grid. Extra points may be supplied to each CLI runner.
 const SWEEP_NUMERATORS = round.(collect(-3.0:0.1:1.5); digits=10)
-const STUDY_GEOMETRIES = [(3, 5), (3, 6), (3, 7), (4, 6)]
-const CHARGE_GAP_GEOMETRIES = [(3, 4), (3, 5), (3, 6), (3, 7), (4, 6)]
+const STUDY_GEOMETRIES = [(3, 4), (3, 5), (3, 6)]
+const CHARGE_GAP_GEOMETRIES = [(3, 3), (3, 4), (3, 5), (3, 6), (3, 7)]
 
 struct PhaseSpec
     name::Symbol

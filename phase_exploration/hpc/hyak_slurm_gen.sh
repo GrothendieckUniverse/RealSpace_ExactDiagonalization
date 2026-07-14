@@ -37,8 +37,10 @@ SWEEP_NUMERATORS=(
    1.0  1.1  1.2  1.3  1.4  1.5
 )
 PHASES=(AHC FCI CDW)
-SWEEP_GEOMETRIES=(3x5 3x6 3x7)
-GAP_GEOMETRIES=(3x4 3x5 3x6 3x7)
+SWEEP_GEOMETRIES=(3x4 3x5 3x6)
+DIAGNOSTIC_GEOMETRIES=(3x4 3x5 3x6)
+GAP_GEOMETRIES=(3x3 3x4 3x5 3x6 3x7)
+DIAGNOSTIC_PROTOCOL="manifold_levels_v2_flow49"
 
 GENERATED_DIR="${SCRIPT_DIR}/generated"
 HYAK_LOG_DIR="${REPO_DIR}/phase_exploration/hpc/logs"
@@ -73,6 +75,7 @@ resource_for() {
   WALLTIME="04:00:00"
 
   case "${geometry}" in
+    3x3) MEM_GB=8 ;;
     3x4) MEM_GB=12 ;;
     3x5) MEM_GB=36 ;;
     3x6) MEM_GB=48 ;;
@@ -84,7 +87,11 @@ resource_for() {
   # Explicit sparse matrices are substantially faster for every currently
   # tractable 3xL cluster.  Allocate one Julia process per Slurm task so the
   # Hamiltonian columns are constructed with Distributed.pmap.
-  if [[ "${geometry}" == "3x4" ]]; then
+  if [[ "${geometry}" == "3x3" ]]; then
+    MODE="matrix"
+    NTASKS=2
+    WALLTIME="01:00:00"
+  elif [[ "${geometry}" == "3x4" ]]; then
     MODE="matrix"
     NTASKS=12
     WALLTIME="01:00:00"
@@ -227,13 +234,14 @@ EOF
   done
 done
 
-for geometry in "${SWEEP_GEOMETRIES[@]}"; do
+for geometry in "${DIAGNOSTIC_GEOMETRIES[@]}"; do
   resource_for diagnostics "${geometry}"
   for phase in "${PHASES[@]}"; do
     phase_lower="${phase,,}"
     job="${GENERATED_DIR}/diagnostics_${geometry}_${phase_lower}.sbatch"
-    write_header "${job}" "tpp_dx_${geometry}_${phase_lower}"
+    write_header "${job}" "tpp_dx2_${geometry}_${phase_lower}"
     cat >> "${job}" <<EOF
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/${DIAGNOSTIC_PROTOCOL}.done
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/zero_flux_spectrum.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/spectrum_flow.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/charge_pump.csv
@@ -245,7 +253,10 @@ for geometry in "${SWEEP_GEOMETRIES[@]}"; do
   "${REPO_DIR}/phase_exploration/bin/run_diagnostic_point.jl" \
   --phase "${phase}" --geometry "${geometry}" --mode "${MODE}" \
   --observables flow,pump,spatial_es,pes --zero-nev 10 --flow-nev 3 \
-  --flow-steps 25 --pump-steps 17 --pes-na 2
+  --flow-steps 49 --pump-steps 17 --pes-na 2 --refresh true
+printf 'protocol=%s\nflow_steps=%s\nmanifold_selection=%s\n' \
+  "${DIAGNOSTIC_PROTOCOL}" "49" "global_lowest_states_with_sector_levels" \
+  > "${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/${DIAGNOSTIC_PROTOCOL}.done"
 mark_complete
 EOF
     printf '%s\n' "$(basename "${job}")" >> "${DATA_MANIFEST}"

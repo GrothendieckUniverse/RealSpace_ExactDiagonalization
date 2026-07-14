@@ -361,16 +361,24 @@ function _resolve_many_body_manifold_states(
     sector_labels;
     filling_fraction::Rational{Int},
     target_eigval_idx::Int,
+    manifold_states,
     ed_mode::Symbol,
     ed_data::Union{Symmetry_Resolved_ED_Data,Nothing},
 )
-    labels = [Tuple(Int.(label)) for label in sector_labels]
+    explicit_states = if manifold_states === nothing
+        [(sector=Tuple(Int.(label)), level=target_eigval_idx) for label in sector_labels]
+    else
+        manifold_states
+    end
+    labels, state_specs, _, _ =
+        _normalize_manifold_state_specs(sector_labels, 1, explicit_states)
     states = Dict{Mask,ComplexF64}[]
     energies = Float64[]
-    for label in labels
+    for state in state_specs
+        label, level = state.sector, state.level
         ed_data, basis, c = _resolve_sector_eigenvector(
             model, label;
-            target_eigval_idx=target_eigval_idx,
+            target_eigval_idx=level,
             filling_fraction=filling_fraction,
             ed_mode=ed_mode,
             ed_data=ed_data,
@@ -379,9 +387,9 @@ function _resolve_many_body_manifold_states(
             c, basis, model.particle_statistics))
         irrep_idx = findfirst(irrep -> irrep.label == label, ed_data.irrep_list)
         vals, _ = ed_data.ed_scan_res[irrep_idx]
-        push!(energies, Float64(vals[target_eigval_idx]))
+        push!(energies, Float64(vals[level]))
     end
-    return labels, states, energies, ed_data
+    return labels, state_specs, states, energies, ed_data
 end
 
 function _sector_embedding_matrix(
@@ -417,6 +425,7 @@ function particle_entanglement_spectrum(
     n_particles_a::Int,
     filling_fraction::Rational{Int},
     target_eigval_idx::Int=1,
+    manifold_states=nothing,
     ed_mode::Symbol=:matrix,
     ed_data::Union{Symmetry_Resolved_ED_Data,Nothing}=nothing,
     probability_cutoff::Float64=1e-14,
@@ -427,10 +436,11 @@ function particle_entanglement_spectrum(
         error("n_particles_a must be between 0 and total particle number $n_particles_total.")
     n_particles_b = n_particles_total - n_particles_a
 
-    labels, states, energies, ed_data = _resolve_many_body_manifold_states(
+    labels, state_specs, states, energies, ed_data = _resolve_many_body_manifold_states(
         model, sector_labels;
         filling_fraction=filling_fraction,
         target_eigval_idx=target_eigval_idx,
+        manifold_states=manifold_states,
         ed_mode=ed_mode,
         ed_data=ed_data,
     )
@@ -495,6 +505,7 @@ function particle_entanglement_spectrum(
         n_particles_b,
         n_particles_total,
         sector_labels=labels,
+        manifold_states=state_specs,
         manifold_energies=energies,
         norm_probability=sum(row.probability for row in levels),
         filling_fraction,

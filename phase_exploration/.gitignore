@@ -1,4 +1,7 @@
-checkpoints/
 hpc/generated/
 hpc/logs/
 hpc/completed/
+
+checkpoints/
+figures/
+results/

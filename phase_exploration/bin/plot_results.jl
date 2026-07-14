@@ -8,7 +8,7 @@ Render figures from generated CSV data (no diagonalization is performed).
 Usage:
   julia --project=. phase_exploration/bin/plot_results.jl \\
     [--kind all|sweep|structure|diagnostics|charge-gap] \\
-    [--geometries '3x5;3x6;3x7;4x6'] [--max-ranks 12]
+    [--geometries '3x4;3x5;3x6'] [--max-ranks 12]
 """
 
 opts, _ = parse_cli(ARGS)
