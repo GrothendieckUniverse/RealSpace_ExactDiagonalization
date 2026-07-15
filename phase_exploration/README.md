@@ -105,6 +105,12 @@ phase's raw sizes, draws its independent linear extrapolation as a matching
 dashed line, and records the `1/N_sites -> 0` intercept and RMS residual. The
 axis includes the gapless `Delta_c=0` reference explicitly.
 
+For the central `N0` calculation, a missing charge-gap checkpoint is seeded
+automatically from a compatible sweep `zero_flux.jld2` when one exists. Thus a
+partially completed distributed sweep can resume in matrix-free charge-gap mode
+without recomputing its finished momentum sectors. The `N0-1` and `N0+1`
+particle-number sectors retain their own charge-gap checkpoints.
+
 After any subset of data exists, render all available figures without further
 diagonalization:
 

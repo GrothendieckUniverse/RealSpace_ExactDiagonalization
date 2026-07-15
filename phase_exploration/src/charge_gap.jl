@@ -1,6 +1,15 @@
 function ground_energy_for_particle_number(sample, x, n_particles;
-    mode, nev, checkpoint, overwrite)
+    mode, nev, checkpoint, overwrite, seed_checkpoint=nothing)
     _, ed_data, _, _ = build_checkerboard_problem(sample, x; n_particles=n_particles)
+    if !overwrite && !isfile(checkpoint) && seed_checkpoint !== nothing &&
+       isfile(seed_checkpoint)
+        seeded = load_checkpoint(seed_checkpoint)
+        checkpoint_problem_matches(seeded, ed_data.second_quantized_model,
+            ed_data.filling_fraction) || error(
+            "Seed checkpoint `$seed_checkpoint` does not match the requested model/filling.")
+        ed_data = seeded
+        @info "Seeding charge-gap scan from compatible zero-flux checkpoint" seed_checkpoint checkpoint completed_sectors=length(ed_data.ed_scan_res)
+    end
     ed_data = scan_with_resume!(ed_data; nev=nev, mode=mode,
         checkpoint_path=checkpoint, overwrite=overwrite)
     table = spectrum_table(ed_data)
@@ -29,8 +38,11 @@ function run_charge_gap_point(phase_name, sample::Tuple{Int,Int};
     sectors = Dict{Int,Tuple{Int,Int}}()
     for np in (n0 - 1, n0, n0 + 1)
         checkpoint = joinpath(ckptdir, "N_$(np).jld2")
+        seed_checkpoint = np == n0 ? joinpath(CHECKPOINT_ROOT, "sweep",
+            geometry_tag(sample), "x_$(tpp_tag(xvalue))", "zero_flux.jld2") : nothing
         energy, sector = ground_energy_for_particle_number(sample, xvalue, np;
-            mode=mode, nev=nev, checkpoint=checkpoint, overwrite=overwrite)
+            mode=mode, nev=nev, checkpoint=checkpoint, overwrite=overwrite,
+            seed_checkpoint=seed_checkpoint)
         energies[np] = energy
         sectors[np] = sector
     end

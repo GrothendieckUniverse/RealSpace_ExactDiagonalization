@@ -51,16 +51,21 @@ if solver_mode == :matrix
         ],
     )
 
-    @info "Launched workers for distributed matrix construction" nworkers=Distributed.nworkers() workers=Distributed.workers()
-    Distributed.nworkers() > 0 || error("SlurmClusterManager launched no Julia workers for explicit matrix mode.")
+    @info "Launched workers for distributed matrix construction" nprocs=Distributed.nprocs() nworkers=Distributed.nworkers() workers=Distributed.workers()
+    Distributed.nprocs() > 1 || error(
+        "SlurmClusterManager launched no additional Julia processes for explicit matrix mode.")
     @everywhere using RealSpace_ExactDiagonalization, LinearAlgebra, Statistics
 else
     # The matrix-free operator uses Threads.@threads and thread-local buffers.
     # Keep it in one process so all allocated CPUs contribute to H|psi>.
-    Distributed.nworkers() == 0 || error("Matrix-free mode must not launch distributed workers.")
+    # With only pid 1, Distributed reports `nworkers() == 1` and
+    # `workers() == [1]`; `nprocs() == 1` is the correct single-process test.
+    Distributed.nprocs() == 1 || error(
+        "Matrix-free mode requires exactly one Julia process; got " *
+        "nprocs=$(Distributed.nprocs()), workers=$(Distributed.workers()).")
     Threads.nthreads() > 1 || error("Matrix-free mode requires JULIA_NUM_THREADS > 1.")
     using RealSpace_ExactDiagonalization, LinearAlgebra, Statistics
-    @info "Using threaded matrix-free solver" julia_threads=Threads.nthreads()
+    @info "Using threaded matrix-free solver" nprocs=Distributed.nprocs() julia_threads=Threads.nthreads()
 end
 
 # ARGS now contains only arguments intended for the target CLI script.
