@@ -51,7 +51,7 @@ end
 
 "Recommended solver mode by geometry and task."
 function mode_for(sample::Tuple{Int,Int}, task::Symbol=:sweep)
-    if sample == (4, 6)
+    if sample in ((3, 7), (4, 6))
         return :matrixfree
     else
         return :matrix

@@ -9,8 +9,10 @@ t'' = x / (2 + 2 sqrt(2)).
 ```
 
 Every generated CSV stores both `tpp_numerator=x` and `tpp_actual=t''`.
-Crucially, **every sweep plot uses the physical `t''` as its x coordinate**;
-the numerator is used only to define the grid and make readable filenames.
+Crucially, **every sweep plot uses the physical `t''` as its horizontal
+coordinate**; plot annotations show only this physical value, rounded to two
+decimal places. The numerator is used only to define the grid and make
+readable filenames.
 
 ## Central configuration
 
@@ -31,11 +33,12 @@ with `--overwrite true` (or remove the corresponding old result/checkpoint
 directories). Checkpoint loading validates the model, filling, and flux and
 will refuse incompatible cached states.
 
-The default solver is explicit sparse-matrix ED for every active geometry from
-3x3 through 3x7. On Hyak, Hamiltonian matrix construction is distributed
-across one-thread Julia workers. Sweeps and diagnostics currently stop at 3x6;
-3x7 is retained only for charge-gap scaling. CLI `--mode matrix` or
-`--mode matrixfree` always overrides this policy.
+The default solver is explicit sparse-matrix ED for active geometries from 3x3
+through 3x6. On Hyak, Hamiltonian matrix construction is distributed across
+one-thread Julia workers. Sweeps and diagnostics currently stop at 3x6; 3x7 is
+retained only for charge-gap scaling and uses one multithreaded matrix-free
+process to avoid constructing the much larger `N0+1` sparse blocks. CLI
+`--mode matrix` or `--mode matrixfree` always overrides this policy.
 
 ## Local jobs
 
@@ -79,6 +82,15 @@ See [`entanglement_counting_notes.md`](entanglement_counting_notes.md) for the
 `(1,3)` PES derivation, geometry-by-geometry counting, and an explanation of
 what the current spatial ES can and cannot establish.
 
+For the corrected `3x6` FCI run, the three manifold states are levels 1--3
+of the same momentum sector `(0,3)`.  The momentum-resolved particle PES uses
+the equal-weight projector over all three states and has exactly 117 levels
+below its largest entanglement gap, with the expected 6/7 even/odd-$K_2$
+sector counting.  The spatial-orbital spectrum instead uses the absolute
+ground state `(0,3,1)` and is resolved only by subsystem particle number.
+The construction, numerical checks, and interpretation are recorded in
+[Section 5 of the counting notes](entanglement_counting_notes.md#5-corrected-3x6-fci-construction-and-numerical-audit).
+
 One finite-size charge-gap datum is:
 
 ```bash
@@ -88,9 +100,10 @@ julia --project=. phase_exploration/bin/run_charge_gap_point.jl \
 
 It scans every momentum sector at `N-1`, `N`, and `N+1`, then stores
 `Delta_c = E0(N+1) + E0(N-1) - 2 E0(N)`. Run it for 3x3, 3x4, 3x5, 3x6, and
-3x7 in each phase. The plotter connects the raw sizes, draws the independent
-linear extrapolation as a dashed line, and records the `1/N_sites -> 0`
-intercept and RMS residual.
+3x7 in each phase. The plotter combines all phases in one panel, connects each
+phase's raw sizes, draws its independent linear extrapolation as a matching
+dashed line, and records the `1/N_sites -> 0` intercept and RMS residual. The
+axis includes the gapless `Delta_c=0` reference explicitly.
 
 After any subset of data exists, render all available figures without further
 diagonalization:
@@ -99,10 +112,18 @@ diagonalization:
 julia --project=. phase_exploration/bin/plot_results.jl --kind all
 ```
 
-Other plot kinds are `sweep`, `structure`, `diagnostics`, and `charge-gap`.
-The sweep renderer creates separate spectrum-rank, `max|S|`, and normalized
-`max|S/mean(S)|` figures for every geometry plus multi-geometry panels. Each
-sweep point gets a two-panel finite-grid/dense-grid 2D structure-factor map.
+Other plot kinds are `sweep`, `ed-spectra`, `structure`, `diagnostics`, and
+`charge-gap`. The `ed-spectra` renderer loops over every available sweep point
+and recreates its zero-twist, symmetry-resolved ED spectrum in the same style
+as the package's `plot_spectrum`, grouped by geometry. The sweep renderer
+creates separate spectrum-rank, `max|S|`, and normalized `max|S/mean(S)|`
+figures for every geometry plus multi-geometry panels. Each sweep point gets a
+two-panel finite-grid/dense-grid 2D structure-factor map. Diagnostic charge-pump
+and spectrum-flow legends identify their momentum sectors. Spectrum-flow plots
+follow the ten states that are lowest at zero flux (configurable with
+`--max-flow-curves`, up to ten), using ten distinct colors and an external
+legend so neither colors nor labels obscure the levels. The complete all-sector
+flow remains available in the CSV.
 
 ## Output layout
 
@@ -114,6 +135,7 @@ phase_exploration/
     charge_gap/<AHC|FCI|CDW>/<L1xL2>/
   figures/
     sweep/
+    ed_spectra/<L1xL2>/
     structure_factor/<L1xL2>/
     diagnostics/<phase>/<L1xL2>/
     charge_gap/

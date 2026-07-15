@@ -1,3 +1,8 @@
+format_tpp(value::Real) = @sprintf("%.2f", Float64(value))
+format_tpp_ticks(values) = format_tpp.(values)
+const FLOW_COLORS = [:royalblue3, :darkorange2, :seagreen4, :firebrick3,
+    :mediumpurple3, :goldenrod2, :deeppink3, :turquoise3, :slategray3, :yellowgreen]
+
 function existing_sweep_points(sample::Tuple{Int,Int})
     root = joinpath(RESULT_ROOT, "sweep", geometry_tag(sample))
     isdir(root) || return String[]
@@ -80,25 +85,26 @@ function plot_sweep_results(; samples=STUDY_GEOMETRIES, max_ranks::Int=12)
         tag = geometry_tag(sample)
 
         fig_s = Figure(size=(850, 580))
-        ax_s = Axis(fig_s[1, 1]; xlabel="physical t′′ = x/(2+2√2)", ylabel="E - E₀",
-            title="Lowest all-sector spectrum ranks — $tag")
+        ax_s = Axis(fig_s[1, 1]; xlabel="t′′", ylabel="E - E₀",
+            title="Lowest all-sector spectrum ranks — $tag", xtickformat=format_tpp_ticks)
         draw_spectrum_axis!(ax_s, sample; max_ranks=max_ranks, legend=true)
         path_s = joinpath(outdir, "spectrum_ranks_$(tag).svg")
         save(path_s, fig_s)
         push!(outputs, path_s)
 
         fig_m = Figure(size=(760, 520))
-        ax_m = Axis(fig_m[1, 1]; xlabel="physical t′′ = x/(2+2√2)", ylabel="max |S(q)|",
-            title="Structure-factor maximum — $tag")
+        ax_m = Axis(fig_m[1, 1]; xlabel="t′′", ylabel="max |S(q)|",
+            title="Structure-factor maximum — $tag", xtickformat=format_tpp_ticks)
         draw_metric_axis!(ax_m, sample, :max_abs_S; color=:darkorange2)
         path_m = joinpath(outdir, "max_abs_structure_factor_$(tag).svg")
         save(path_m, fig_m)
         push!(outputs, path_m)
 
         fig_r = Figure(size=(760, 520))
-        ax_r = Axis(fig_r[1, 1]; xlabel="physical t′′ = x/(2+2√2)",
+        ax_r = Axis(fig_r[1, 1]; xlabel="t′′",
             ylabel="max |S(q)/mean(S(q))|",
-            title="Normalized structure-factor maximum — $tag")
+            title="Normalized structure-factor maximum — $tag",
+            xtickformat=format_tpp_ticks)
         draw_metric_axis!(ax_r, sample, :max_abs_S_over_mean_S; color=:seagreen4)
         path_r = joinpath(outdir, "max_abs_structure_factor_over_mean_$(tag).svg")
         save(path_r, fig_r)
@@ -112,11 +118,11 @@ function plot_sweep_results(; samples=STUDY_GEOMETRIES, max_ranks::Int=12)
         fig = Figure(size=(760 * ncol, 520 * nrow))
         for (idx, sample) in enumerate(active)
             row, col = fldmod1(idx, ncol)
-            ax = Axis(fig[row, col]; xlabel="physical t′′", ylabel="E - E₀",
-                title=geometry_tag(sample))
+            ax = Axis(fig[row, col]; xlabel="t′′", ylabel="E - E₀",
+                title=geometry_tag(sample), xtickformat=format_tpp_ticks)
             draw_spectrum_axis!(ax, sample; max_ranks=max_ranks)
         end
-        Label(fig[0, 1:ncol], "Lowest all-sector spectrum ranks (x-axis is the physical hopping)"; fontsize=20)
+        Label(fig[0, 1:ncol], "Lowest all-sector spectrum ranks versus t′′"; fontsize=20)
         path = joinpath(outdir, "spectrum_ranks_all_geometries.svg")
         save(path, fig)
         push!(outputs, path)
@@ -128,8 +134,8 @@ function plot_sweep_results(; samples=STUDY_GEOMETRIES, max_ranks::Int=12)
             figm = Figure(size=(760 * ncol, 500 * nrow))
             for (idx, sample) in enumerate(active)
                 row, col = fldmod1(idx, ncol)
-                ax = Axis(figm[row, col]; xlabel="physical t′′", ylabel=label,
-                    title=geometry_tag(sample))
+                ax = Axis(figm[row, col]; xlabel="t′′", ylabel=label,
+                    title=geometry_tag(sample), xtickformat=format_tpp_ticks)
                 draw_metric_axis!(ax, sample, field; color=color)
             end
             Label(figm[0, 1:ncol], "$label versus physical t′′"; fontsize=20)
@@ -139,6 +145,45 @@ function plot_sweep_results(; samples=STUDY_GEOMETRIES, max_ranks::Int=12)
         end
     end
     @info "Wrote sweep figures" count=length(outputs) outdir
+    return outputs
+end
+
+"Render the zero-twist ED spectrum stored at every available sweep point."
+function plot_ed_spectrum_results(; samples=STUDY_GEOMETRIES)
+    outputs = String[]
+    for sample in samples
+        outdir = joinpath(FIGURE_ROOT, "ed_spectra", geometry_tag(sample))
+        for point in existing_sweep_points(sample)
+            spectrum_path = joinpath(point, "spectrum.csv")
+            isfile(spectrum_path) || continue
+            rows = read_simple_csv(spectrum_path)
+            isempty(rows) && continue
+
+            xnumerator = csv_float(rows[1].tpp_numerator)
+            xactual = csv_float(rows[1].tpp_actual)
+            irrep_indices = [csv_int(row.irrep_index) - 1 for row in rows]
+            energies = [csv_float(row.energy_minus_E0) for row in rows]
+            n_irrep = prod(sample)
+
+            fig = Figure(size=(760, 520))
+            ax = Axis(fig[1, 1];
+                xlabel="Irrep index",
+                ylabel="E - E₀",
+                title="ED Spectrum — $(geometry_tag(sample)), ν=1/6\nt′′ = $(format_tpp(xactual))",
+                xticks=0:2:(n_irrep-1),
+                xminorticksvisible=true,
+                yminorticksvisible=true,
+            )
+            scatter!(ax, irrep_indices, energies; color=:royalblue1, markersize=14,
+                alpha=0.75, strokecolor=:blue, strokewidth=0.5)
+
+            mkpath(outdir)
+            path = joinpath(outdir, "x_$(tpp_tag(xnumerator)).svg")
+            save(path, fig)
+            push!(outputs, path)
+        end
+    end
+    @info "Wrote zero-twist ED spectrum figures" count=length(outputs)
     return outputs
 end
 
@@ -190,8 +235,8 @@ function plot_structure_factor_results(; samples=STUDY_GEOMETRIES)
             heatmap!(ax2, kx, ky, dense; colorrange=(lo, hi), colormap=:viridis)
             draw_square_bz!(ax2)
             Colorbar(fig[1, 3], sc; label="connected S(q)")
-            Label(fig[0, 1:2], @sprintf("%s, physical t′′ = %.8f (x = %.3f)",
-                geometry_tag(sample), xactual, xnumerator); fontsize=18)
+            Label(fig[0, 1:2], "$(geometry_tag(sample)), t′′ = $(format_tpp(xactual))";
+                fontsize=18)
             mkpath(outdir)
             path = joinpath(outdir, "x_$(tpp_tag(xnumerator))_allowed_and_dense.svg")
             save(path, fig)
@@ -211,6 +256,31 @@ function group_rows(rows, fields::Tuple)
     return groups
 end
 
+function manifold_state_specs(datadir)
+    path = joinpath(datadir, "summary.csv")
+    isfile(path) || return NamedTuple[]
+    rows = read_simple_csv(path)
+    isempty(rows) && return NamedTuple[]
+    specs = NamedTuple[]
+    for state in split(rows[1].manifold_state_levels, ';')
+        fields = split(state, ':')
+        length(fields) == 3 || continue
+        push!(specs, (sector=(parse(Int, fields[1]), parse(Int, fields[2])),
+            level=parse(Int, fields[3])))
+    end
+    return specs
+end
+
+function diagnostic_tpp(datadir)
+    for filename in ("summary.csv", "zero_flux_spectrum.csv")
+        path = joinpath(datadir, filename)
+        isfile(path) || continue
+        rows = read_simple_csv(path)
+        isempty(rows) || return csv_float(rows[1].tpp_actual)
+    end
+    return nothing
+end
+
 "Torus counting of `(1,m)`-admissible configurations for a particle cut."
 function torus_admissible_count(n_orbitals::Int, n_particles::Int; m::Int=3)
     n_particles == 0 && return 1
@@ -219,7 +289,10 @@ function torus_admissible_count(n_orbitals::Int, n_particles::Int; m::Int=3)
         n_particles - 1)) ÷ n_particles
 end
 
-function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOMETRIES)
+function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOMETRIES,
+    max_flow_curves::Int=10)
+    1 <= max_flow_curves <= length(FLOW_COLORS) || error(
+        "max_flow_curves must be between 1 and $(length(FLOW_COLORS)); got $max_flow_curves.")
     outputs = String[]
     for phase_symbol in phases, sample in samples
         phase = String(phase_symbol)
@@ -227,27 +300,40 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
         isdir(datadir) || continue
         outdir = joinpath(FIGURE_ROOT, "diagnostics", phase, geometry_tag(sample))
         mkpath(outdir)
-        title_prefix = "$phase — $(geometry_tag(sample))"
+        tpp = diagnostic_tpp(datadir)
+        title_prefix = isnothing(tpp) ? "$phase — $(geometry_tag(sample))" :
+            "$phase — $(geometry_tag(sample)), t′′ = $(format_tpp(tpp))"
 
         flow_path = joinpath(datadir, "spectrum_flow.csv")
         if isfile(flow_path)
             rows = read_simple_csv(flow_path)
-            groups = group_rows(rows, (:k1, :k2, :level))
-            fig = Figure(size=(900, 600))
+            groups = Dict{Tuple{Int,Int,Int},Vector{Any}}()
+            for row in rows
+                key = (csv_int(row.k1), csv_int(row.k2), csv_int(row.level))
+                push!(get!(groups, key, Any[]), row)
+            end
+            curves = collect(groups)
+            sort!(curves; by=curve -> begin
+                key, values = curve
+                reference = values[argmin([abs(csv_float(row.flux_over_2pi)) for row in values])]
+                (csv_float(reference.energy_minus_flux_ground), key...)
+            end)
+            resize!(curves, min(max_flow_curves, length(curves)))
+
+            fig = Figure(size=(760, 520))
             ax = Axis(fig[1, 1]; xlabel="inserted flux / 2π", ylabel="E - E₀(θ)",
-                title="$title_prefix spectrum flow (all momentum sectors)")
-            sectors = sort(unique((csv_int(row.k1), csv_int(row.k2)) for row in rows))
-            sector_index = Dict(k => i for (i, k) in enumerate(sectors))
-            for (key, values) in groups
+                title="$title_prefix spectrum flow ($(length(curves)) lowest zero-flux states)")
+            for (icurve, curve) in enumerate(curves)
+                (k1, k2, level), values = curve
                 sort!(values; by=row -> csv_float(row.flux_over_2pi))
-                sector = (csv_int(key[1]), csv_int(key[2]))
-                level = csv_int(key[3])
-                color = Makie.Cycled(sector_index[sector])
-                alpha = 1 / sqrt(level)
+                label = "($k1, $k2), level $level"
                 lines!(ax, [csv_float(row.flux_over_2pi) for row in values],
                     [csv_float(row.energy_minus_flux_ground) for row in values];
-                    color=color, alpha=alpha, linewidth=1.5)
+                    color=FLOW_COLORS[icurve], linewidth=1.7, label=label)
             end
+            Legend(fig[1, 2], ax; title="Sector (k₁, k₂), level",
+                framevisible=true, labelsize=11, patchsize=(20, 12))
+            colgap!(fig.layout, 10)
             path = joinpath(outdir, "spectrum_flow.svg")
             save(path, fig)
             push!(outputs, path)
@@ -257,7 +343,8 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
         if isfile(pump_path)
             rows = read_simple_csv(pump_path)
             groups = group_rows(rows, (:branch,))
-            fig = Figure(size=(820, 560))
+            state_specs = manifold_state_specs(datadir)
+            fig = Figure(size=(760, 520))
             ax = Axis(fig[1, 1]; xlabel="inserted flux / 2π", ylabel="pumped charge ΔQ",
                 title="$title_prefix charge pump")
             for (key, values) in sort(collect(groups); by=x -> csv_int(x[1][1]))
@@ -265,7 +352,13 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
                 sort!(values; by=row -> csv_float(row.flux_over_2pi))
                 x = [csv_float(row.flux_over_2pi) for row in values]
                 y = [csv_float(row.pumped_charge) for row in values]
-                lines!(ax, x, y; color=Makie.Cycled(branch), linewidth=2, label="branch $branch")
+                label = if branch <= length(state_specs)
+                    state = state_specs[branch]
+                    "branch $branch — sector ($(state.sector[1]), $(state.sector[2])), level $(state.level)"
+                else
+                    "branch $branch"
+                end
+                lines!(ax, x, y; color=Makie.Cycled(branch), linewidth=2, label=label)
                 scatter!(ax, x, y; color=Makie.Cycled(branch), markersize=6)
             end
             axislegend(ax; position=:lt)
@@ -277,7 +370,7 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
         spatial_path = joinpath(datadir, "spatial_entanglement_spectrum.csv")
         if isfile(spatial_path)
             rows = read_simple_csv(spatial_path)
-            fig = Figure(size=(760, 540))
+            fig = Figure(size=(760, 520))
             ax = Axis(fig[1, 1]; xlabel="particles in spatial/orbital region A (N_A)",
                 ylabel="ξ = -log(λ)", title="$title_prefix spatial-orbital ES")
             x = [csv_int(row.N_A) for row in rows]
@@ -296,7 +389,7 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
             x = [index[(csv_int(row.k1), csv_int(row.k2))] for row in rows]
             y = [csv_float(row.entanglement_energy) for row in rows]
             # Keep momentum labels legible on geometries with many sectors.
-            fig = Figure(size=(max(1000, 80 * length(momenta)), 600))
+            fig = Figure(size=(760, 520))
             ax = Axis(fig[1, 1]; xlabel="subsystem momentum sector", ylabel="ξ = -log(λ)",
                 title="$title_prefix momentum-resolved PES",
                 xticks=(1:length(momenta), ["($(k[1]),$(k[2]))" for k in momenta]),
@@ -306,7 +399,7 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
             if length(sorted_y) >= 2
                 gaps = diff(sorted_y)
                 gap_index = argmax(gaps)
-                gap_cut = (sorted_y[gap_index] + sorted_y[gap_index + 1]) / 2
+                gap_cut = (sorted_y[gap_index] + sorted_y[gap_index+1]) / 2
                 gap_label = "largest gap: $gap_index levels below"
                 summary_path = joinpath(datadir, "summary.csv")
                 if phase_symbol == :FCI && isfile(summary_path)
@@ -344,7 +437,10 @@ function plot_charge_gap_results(; phases=[:AHC, :FCI, :CDW])
     outputs = String[]
     outdir = joinpath(FIGURE_ROOT, "charge_gap")
     mkpath(outdir)
-    for phase in phases
+    phase_data = NamedTuple[]
+    colors = [:royalblue3, :darkorange2, :seagreen4, :mediumpurple3]
+
+    for (iphase, phase) in enumerate(phases)
         rows = charge_gap_rows(phase)
         length(rows) >= 2 || continue
         x = [1 / csv_int(row.n_sites) for row in rows]
@@ -352,27 +448,11 @@ function plot_charge_gap_results(; phases=[:AHC, :FCI, :CDW])
         design = hcat(ones(length(x)), x)
         fit = design \ y
         intercept, slope = fit
-        residual = sqrt(mean((design * fit .- y).^2))
-        labels = ["$(row.L1)x$(row.L2)" for row in rows]
+        residual = sqrt(mean((design * fit .- y) .^ 2))
 
-        fig = Figure(size=(760, 540))
-        ax = Axis(fig[1, 1]; xlabel="1 / N_sites", ylabel="charge gap Δc",
-            title="$(String(phase)) charge-gap finite-size scaling")
-        line_x = collect(range(0.0, maximum(x); length=200))
-        lines!(ax, line_x, intercept .+ slope .* line_x; color=:firebrick3, linewidth=2,
-            linestyle=:dash, label=@sprintf("linear extrapolation: Δ∞ = %.6f", intercept))
-        order = sortperm(x)
-        lines!(ax, x[order], y[order]; color=:royalblue3, linewidth=1.8,
-            label="finite-size data")
-        scatter!(ax, x, y; color=:royalblue3, markersize=12)
-        scatter!(ax, [0.0], [intercept]; color=:black, marker=:diamond, markersize=14)
-        for i in eachindex(x)
-            text!(ax, x[i], y[i]; text=labels[i], offset=(7, 7), fontsize=12)
-        end
-        axislegend(ax; position=:lt)
-        path = joinpath(outdir, "$(lowercase(String(phase)))_charge_gap_scaling.svg")
-        save(path, fig)
-        push!(outputs, path)
+        push!(phase_data, (phase=String(phase), rows=rows, x=x, y=y,
+            tpp_actual=csv_float(rows[1].tpp_actual), intercept=intercept,
+            slope=slope, color=colors[mod1(iphase, length(colors))]))
 
         fit_path = joinpath(RESULT_ROOT, "charge_gap", String(phase), "finite_size_fit.csv")
         ensure_parent(fit_path)
@@ -383,13 +463,42 @@ function plot_charge_gap_results(; phases=[:AHC, :FCI, :CDW])
                 intercept, slope, residual)
         end
     end
-    @info "Wrote charge-gap scaling figures" count=length(outputs)
+
+    isempty(phase_data) && return outputs
+    fig = Figure(size=(760, 520))
+    ax = Axis(fig[1, 1]; xlabel="1 / N_sites", ylabel="charge gap Δc",
+        title="Charge-gap finite-size scaling with 1/N_sites → 0 extrapolation")
+    hlines!(ax, [0.0]; color=:black, linestyle=:dot, linewidth=1.2)
+    vlines!(ax, [0.0]; color=:black, linestyle=:dot, linewidth=1.2)
+
+    ymaximum = 0.0
+    for data in phase_data
+        line_x = collect(range(0.0, maximum(data.x); length=200))
+        fit_y = data.intercept .+ data.slope .* line_x
+        lines!(ax, line_x, fit_y; color=data.color, linewidth=2, linestyle=:dash)
+        order = sortperm(data.x)
+        label = "$(data.phase) — t′′ = $(format_tpp(data.tpp_actual))"
+        lines!(ax, data.x[order], data.y[order]; color=data.color, linewidth=1.8,
+            label=label)
+        scatter!(ax, data.x, data.y; color=data.color, markersize=10)
+        scatter!(ax, [0.0], [data.intercept]; color=data.color, marker=:diamond,
+            markersize=13, strokecolor=:black, strokewidth=0.5)
+        ymaximum = max(ymaximum, maximum(data.y), maximum(fit_y), data.intercept)
+    end
+    ylims!(ax, -0.1, 1.1 * ymaximum)
+    axislegend(ax; position=:lt)
+
+    path = joinpath(outdir, "tpp_charge_gap_finite_size_scaling.svg")
+    save(path, fig)
+    push!(outputs, path)
+    @info "Wrote combined charge-gap scaling figure" phases=length(phase_data) path
     return outputs
 end
 
 function plot_all_results()
     return vcat(
         plot_sweep_results(),
+        plot_ed_spectrum_results(),
         plot_structure_factor_results(),
         plot_diagnostic_results(),
         plot_charge_gap_results(),

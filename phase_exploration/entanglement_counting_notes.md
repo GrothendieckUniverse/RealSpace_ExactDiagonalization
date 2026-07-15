@@ -314,18 +314,23 @@ the dimension of the topological manifold.
 
 | geometry | expected $(1,3)$ count | levels below largest PES gap | largest gap | verdict |
 |:--|--:|--:|--:|:--|
-| `3x4` | 42 | not yet available | not yet available | local/HPC generation is paused |
+| `3x4` | 42 | 42 | 2.37097 | exact total and sector-by-sector match |
 | `3x5` | 75 | 75 | 2.72160 | exact total and sector-by-sector match |
-| `3x6` | 117 | 117 | 0.93947 | numerical match, but corrected-manifold rerun required |
+| `3x6` | 117 | 117 | 2.30153 | exact match using the corrected three-state manifold |
 
-For `3x5`, the five levels in every momentum sector exactly match the cyclic
-admissible enumeration.  This is strong finite-size evidence for the desired
+For `3x4`, the corrected low band contains three levels in each even-$K_2$
+sector and four in each odd-$K_2$ sector.  For `3x5`, it contains five levels
+in every momentum sector.  For `3x6`, it contains six levels in each
+even-$K_2$ sector and seven in each odd-$K_2$ sector.  Thus all three
+geometries match both the total cyclic-admissible count and its folding among
+lattice momenta.  This is strong finite-size evidence for the desired
 $1/3$-Laughlin FCI order.
 
-The existing `3x6` CSV also has 117 levels below its largest gap, distributed
-as 6/7 in even/odd $K_2$ sectors.  However, it was generated with the old
-manifold-selection bug described in Section 5.  Its agreement is encouraging
-but should not be treated as final evidence until the version-2 HPC rerun.
+The corrected `3x6` result is particularly important because all three
+ground-manifold states occupy the same many-body momentum sector.  The PES
+uses levels 1, 2, and 3 of sector $(0,3)$, rather than taking one state from
+each of three distinct sectors.  Section 5 gives a numerical audit of this
+rerun and contrasts it with the obsolete result.
 
 Blindly selecting the largest gap in non-FCI data gives 431 and 44 levels for
 AHC (`3x5`, `3x6`) and 3, 10, and 33 levels for CDW (`3x4`, `3x5`, `3x6`).
@@ -514,9 +519,28 @@ $$
 $$
 
 Only the central block does not saturate the kinematic ceiling:
-$676<816$.  This can reflect exact wavefunction structure, symmetry-imposed
-relations, coefficient thresholding, or other finite-size details.  The
-number 676 by itself has no established universal Laughlin interpretation.
+$676<816$.  The smallest retained central-block probability is
+$1.04484\times10^{-14}$, while the implementation discards probabilities at
+or below $10^{-14}$.  The reported rank 676 is therefore visibly sensitive
+to the numerical cutoff.  It may also reflect exact wavefunction structure
+or symmetry-imposed relations, but a cutoff-stability calculation would be
+needed to separate those possibilities.  The number 676 by itself has no
+established universal Laughlin interpretation.
+
+The corrected file passes two useful checks.  First, all retained Schmidt
+probabilities sum to
+
+$$
+\operatorname{Tr}\rho_A=1.000000000000047.
+$$
+
+Second, because the cut divides the cluster into equal 18-site halves, the
+spectra in the $N_A$ and $6-N_A$ blocks must agree for a pure state.  The
+maximum probability differences for the paired blocks $(0,6)$, $(1,5)$,
+and $(2,4)$ are respectively $0$, $2.17\times10^{-19}$, and
+$1.94\times10^{-16}$.  This is a stringent numerical validation of the
+spatial Schmidt decomposition, but it is still not an edge-CFT counting
+test.
 
 ### 3.3 Where the edge-CFT counting comes from
 
@@ -854,7 +878,13 @@ topological Hilbert-space structure in the thermodynamic limit.  They are not
 the same finite-size table, because one probes particles throughout the bulk
 and the other probes modes localized at a boundary.
 
-## 5. Data-provenance warning for the `3x6` FCI
+## 5. Corrected `3x6` FCI: construction and numerical audit
+
+This section records exactly which states enter each entanglement
+calculation and checks the new CSVs independently.  This distinction matters
+because the two spectra use different density matrices.
+
+### 5.1 Correct zero-flux manifold
 
 The old diagnostic driver selected the lowest state in each of three
 **distinct** momentum sectors.  That is wrong when several states of the
@@ -866,14 +896,128 @@ lowest manifold is
 ```
 
 with energy splittings `0`, `0.0160538`, and `0.0162115`, followed by a gap
-of about `0.2275` to the fourth state.  The downloaded pump and PES instead
-used `(0,3,1), (0,0,1), (1,3,1)`.
+of about `0.2275` from the third to the fourth state.  The obsolete pump and
+PES instead used `(0,3,1), (0,0,1), (1,3,1)`.
 
-The toolbox now carries explicit `(sector, level)` state specifications.  The
-old integer-winding `3x6` charge-pump branches are therefore a projection
-artifact, not evidence against the FCI.  Likewise, only the corrected PES
-rerun should be used as final evidence, even though the old PES happens to
-match the 117-level admissible count.
+The toolbox now carries explicit `(sector, level)` state specifications, and
+the corrected summary records
+
+```text
+manifold_state_levels = 0:3:1;0:3:2;0:3:3
+```
+
+The old integer-winding `3x6` charge-pump branches were therefore a
+projection artifact, not evidence against the FCI.  The corrected pump
+transports one total charge across the three-state manifold, with final
+branch values approximately $0.3221$, $0.3221$, and $0.3558$.
+
+### 5.2 Corrected momentum-resolved particle PES
+
+For the particle cut, $N=6$ is split into $N_A=2$ and $N_B=4$.  The density
+matrix used by the corrected calculation is
+
+$$
+\rho_A^{\mathrm{PES}}
+=\operatorname{Tr}_{N_B=4}
+ \left[
+ \frac13\sum_{\alpha=1}^{3}
+ |\Psi_{(0,3),\alpha}\rangle
+ \langle\Psi_{(0,3),\alpha}|
+ \right],
+$$
+
+where $\alpha$ is the in-sector level.  This equal-weight projector is
+invariant under any unitary rotation of the three nearly degenerate states;
+using all three is essential when they share a momentum sector.
+
+The numerical audit gives
+
+$$
+\operatorname{Tr}\rho_A^{\mathrm{PES}}
+=1.000000000000002,
+\qquad
+\dim\mathcal H_A=\binom{36}{2}=630.
+$$
+
+Sorting all 630 entanglement energies, the largest consecutive gap lies
+between
+
+$$
+\xi_{117}=5.3985263512,
+\qquad
+\xi_{118}=7.7000530006,
+$$
+
+and therefore
+
+$$
+\Delta_\xi=\xi_{118}-\xi_{117}=2.3015266494.
+$$
+
+Equivalently, the Schmidt probabilities drop by a factor
+$\exp(\Delta_\xi)\simeq9.989$ across this gap.  The 117-level low band carries
+probability weight $0.96721834$, while the remaining 513 levels carry
+$0.03278166$.  An independent enumeration of cyclic $(1,3)$-admissible pairs
+gives the same sector distribution:
+
+| $K_1$ | $K_2=0$ | $K_2=1$ | $K_2=2$ | $K_2=3$ | $K_2=4$ | $K_2=5$ |
+|--:|--:|--:|--:|--:|--:|--:|
+| 0 | 6 | 7 | 6 | 7 | 6 | 7 |
+| 1 | 6 | 7 | 6 | 7 | 6 | 7 |
+| 2 | 6 | 7 | 6 | 7 | 6 | 7 |
+
+The row sum is $39$ for each $K_1$, and the total is
+$3\times39=117$.  Thus the corrected result matches not merely the total
+count but every subsystem momentum sector.  The obsolete manifold happened
+to give the same total 117 below its largest gap, but its smaller gap
+$0.93947$ and incorrect manifold projector must not be used as evidence.
+
+### 5.3 Corrected spatial-orbital spectrum
+
+The spatial calculation is deliberately different.  The cut keeps the 18
+site orbitals in the three-cell strip $0\le y<3$ and traces out the other 18.
+The current implementation uses the absolute ground state only,
+
+$$
+\rho_A^{\mathrm{spatial}}
+=\operatorname{Tr}_B
+ |\Psi_{(0,3),1}\rangle
+ \langle\Psi_{(0,3),1}|,
+$$
+
+not the three-state mixed projector.  Consequently the old manifold-selection
+bug did not change this spatial CSV: its selected state was already
+$(0,3,1)$.  A minimally entangled linear combination could nevertheless be
+preferable for exposing a clean edge branch, as discussed in Section 3.1.
+
+The corrected numerical block summary is
+
+| $N_A$ | retained rank | kinematic ceiling | block weight $\operatorname{Tr}\rho_A(N_A)$ |
+|--:|--:|--:|--:|
+| 0 | 1 | 1 | $1.02711\times10^{-7}$ |
+| 1 | 18 | 18 | $9.10311\times10^{-4}$ |
+| 2 | 153 | 153 | $0.2028837561$ |
+| 3 | 676 | 816 | $0.5924116595$ |
+| 4 | 153 | 153 | $0.2028837561$ |
+| 5 | 18 | 18 | $9.10311\times10^{-4}$ |
+| 6 | 1 | 1 | $1.02711\times10^{-7}$ |
+
+The total weight is unity to $5\times10^{-14}$, and the block weights and
+individual Schmidt values obey $N_A\leftrightarrow6-N_A$ reflection to
+machine precision.  The central retained rank is cutoff-sensitive, as shown
+in Section 3.2.  Because this file resolves only $N_A$ and not momentum
+parallel to the cut, neither 676 nor the total ranks in the other blocks can
+be compared with the chiral sequence $1,1,2,3,5,\ldots$.
+
+### 5.4 What the two corrected calculations establish
+
+The particle PES now supplies a sharp positive diagnosis: the full corrected
+ground-state projector produces the exact total and momentum-resolved
+Laughlin quasihole counting below a sizeable entanglement gap.  The spatial
+spectrum supplies strong normalization, reflection, and Schmidt-rank checks,
+but the current output does not resolve the edge momentum required for a
+Li-Haldane counting test.  These are complementary statements; the latter
+limitation does not weaken the former PES result.
 
 ## 6. Primary references
 
