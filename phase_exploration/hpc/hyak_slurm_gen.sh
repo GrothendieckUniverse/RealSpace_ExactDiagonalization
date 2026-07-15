@@ -79,7 +79,7 @@ resource_for() {
     3x4) MEM_GB=12 ;;
     3x5) MEM_GB=36 ;;
     3x6) MEM_GB=72 ;;
-    3x7) MEM_GB=144 ;;
+    3x7) MEM_GB=240 ;;
     4x6) MEM_GB=240 ;;
     *) echo "Unknown geometry ${geometry}" >&2; exit 2 ;;
   esac
@@ -104,13 +104,12 @@ resource_for() {
     NTASKS=48
     WALLTIME="04:00:00"
   elif [[ "${geometry}" == "3x7" ]]; then
-    # The N0+1 charge-gap sector has C(42,8) states before symmetry
-    # reduction. Avoid constructing its large sparse matrices and avoid
-    # replicating the basis/catalog across many Julia worker processes.
-    MODE="matrixfree"
-    NTASKS=1
-    CPUS_PER_TASK=128
-    JULIA_THREADS=128
+    # Matrix-free allocates one sector-sized accumulation buffer per Julia
+    # thread and a large canonical-map cache. That exceeded 72 GiB already
+    # in the N0 sector. Use the resumable Distributed.pmap sparse-matrix path
+    # for all three particle-number sectors and leave headroom for N0+1.
+    MODE="matrix"
+    NTASKS=84
     WALLTIME="08:00:00"
   elif [[ "${geometry}" == "4x6" ]]; then
     # Matrix-free H|psi> is shared-memory threaded.  Use one Julia process

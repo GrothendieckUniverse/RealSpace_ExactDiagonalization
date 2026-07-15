@@ -1,17 +1,10 @@
 function ground_energy_for_particle_number(sample, x, n_particles;
     mode, nev, checkpoint, overwrite, seed_checkpoint=nothing)
     _, ed_data, _, _ = build_checkerboard_problem(sample, x; n_particles=n_particles)
-    if !overwrite && !isfile(checkpoint) && seed_checkpoint !== nothing &&
-       isfile(seed_checkpoint)
-        seeded = load_checkpoint(seed_checkpoint)
-        checkpoint_problem_matches(seeded, ed_data.second_quantized_model,
-            ed_data.filling_fraction) || error(
-            "Seed checkpoint `$seed_checkpoint` does not match the requested model/filling.")
-        ed_data = seeded
-        @info "Seeding charge-gap scan from compatible zero-flux checkpoint" seed_checkpoint checkpoint completed_sectors=length(ed_data.ed_scan_res)
-    end
+    seed_paths = seed_checkpoint === nothing ? String[] : [String(seed_checkpoint)]
     ed_data = scan_with_resume!(ed_data; nev=nev, mode=mode,
-        checkpoint_path=checkpoint, overwrite=overwrite)
+        checkpoint_path=checkpoint, seed_checkpoint_paths=seed_paths,
+        overwrite=overwrite)
     table = spectrum_table(ed_data)
     return table[1].energy, table[1].sector
 end

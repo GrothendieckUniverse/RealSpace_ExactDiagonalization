@@ -34,11 +34,12 @@ directories). Checkpoint loading validates the model, filling, and flux and
 will refuse incompatible cached states.
 
 The default solver is explicit sparse-matrix ED for active geometries from 3x3
-through 3x6. On Hyak, Hamiltonian matrix construction is distributed across
+through 3x7. On Hyak, Hamiltonian matrix construction is distributed across
 one-thread Julia workers. Sweeps and diagnostics currently stop at 3x6; 3x7 is
-retained only for charge-gap scaling and uses one multithreaded matrix-free
-process to avoid constructing the much larger `N0+1` sparse blocks. CLI
-`--mode matrix` or `--mode matrixfree` always overrides this policy.
+retained only for charge-gap scaling and requests 84 workers and 240 GiB per
+job. This avoids the matrix-free implementation's sector-sized buffer per
+thread, which exhausts memory on this geometry. CLI `--mode matrix` or
+`--mode matrixfree` always overrides this policy.
 
 ## Local jobs
 
@@ -106,10 +107,13 @@ dashed line, and records the `1/N_sites -> 0` intercept and RMS residual. The
 axis includes the gapless `Delta_c=0` reference explicitly.
 
 For the central `N0` calculation, a missing charge-gap checkpoint is seeded
-automatically from a compatible sweep `zero_flux.jld2` when one exists. Thus a
-partially completed distributed sweep can resume in matrix-free charge-gap mode
-without recomputing its finished momentum sectors. The `N0-1` and `N0+1`
-particle-number sectors retain their own charge-gap checkpoints.
+automatically from a compatible sweep `zero_flux.jld2` when one exists. If both
+the sweep and charge-gap checkpoints are partial, their completed momentum
+sectors are merged before the scan continues. The merged cache is saved before
+the next sector starts, then updated atomically after every completed sector;
+an interrupted or OOM-killed job therefore resumes from its last finished
+sector. The `N0-1` and `N0+1` particle-number sectors retain their own
+charge-gap checkpoints and resume in the same way.
 
 After any subset of data exists, render all available figures without further
 diagonalization:

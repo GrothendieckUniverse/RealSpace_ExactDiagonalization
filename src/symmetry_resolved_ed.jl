@@ -1050,10 +1050,19 @@ end
 # 17d. Checkpoint support (HPC preemption resilience)
 # ═══════════════════════════════════════════════════════════════════════════
 
-"Save ED data to a checkpoint file using JLD2"
+"Save ED data atomically to a checkpoint file using JLD2."
 function save_checkpoint(ed_data::Symmetry_Resolved_ED_Data, path::String)::Nothing
     mkpath(dirname(path))
-    @save path ed_data
+    # One job owns each checkpoint path. Reusing a fixed sibling temporary
+    # file prevents stale, potentially large files from accumulating after
+    # an uncatchable SIGKILL while preserving the previous checkpoint.
+    temp_path = path * ".tmp"
+    try
+        @save temp_path ed_data
+        mv(temp_path, path; force=true)
+    finally
+        isfile(temp_path) && rm(temp_path; force=true)
+    end
     return nothing
 end
 

@@ -75,6 +75,7 @@ function scan_with_resume!(ed_data;
     mode::Symbol,
     sectors=nothing,
     checkpoint_path::Union{Nothing,String}=nothing,
+    seed_checkpoint_paths=String[],
     overwrite::Bool=false,
 )
     mode in (:matrix, :matrixfree) || error("Unknown ED mode $mode.")
@@ -87,6 +88,22 @@ function scan_with_resume!(ed_data;
         ed_data = loaded
     elseif overwrite
         empty!(ed_data.ed_scan_res)
+    end
+
+    imported_sectors = 0
+    if !overwrite
+        for seed_path in seed_checkpoint_paths
+            isfile(seed_path) || continue
+            if checkpoint_path !== nothing && abspath(seed_path) == abspath(checkpoint_path)
+                continue
+            end
+            imported = import_checkpoint_sectors!(ed_data, seed_path; nev=nev)
+            imported_sectors += imported
+            imported > 0 && @info "Imported completed sectors from compatible cache" seed_path imported total_cached=length(ed_data.ed_scan_res)
+        end
+    end
+    if imported_sectors > 0 && checkpoint_path !== nothing
+        save_checkpoint(ed_data, ensure_parent(checkpoint_path))
     end
 
     labels = sectors === nothing ? all_sector_labels(ed_data) : [Tuple(Int.(k)) for k in sectors]
@@ -104,6 +121,36 @@ function scan_with_resume!(ed_data;
     end
     checkpoint_path !== nothing && save_checkpoint(ed_data, ensure_parent(checkpoint_path))
     return ed_data
+end
+
+"Import complete sectors from a compatible checkpoint, matching them by irrep label."
+function import_checkpoint_sectors!(ed_data, source_path::AbstractString; nev::Int)
+    loaded = load_checkpoint(String(source_path))
+    target_flux = ed_data.second_quantized_model.lattice.twisted_phases_over_2π
+    checkpoint_problem_matches(loaded, ed_data.second_quantized_model,
+        ed_data.filling_fraction; flux=target_flux) || error(
+        "Seed checkpoint `$source_path` belongs to a different model/filling.")
+
+    imported = 0
+    for (source_idx, result) in loaded.ed_scan_res
+        source_idx in eachindex(loaded.irrep_list) || error(
+            "Seed checkpoint `$source_path` contains invalid sector index $source_idx.")
+        values, vectors = result
+        length(values) >= nev && size(vectors, 2) >= nev || continue
+        label = loaded.irrep_list[source_idx].label
+        target_idx = findfirst(irrep -> irrep.label == label, ed_data.irrep_list)
+        target_idx === nothing && error(
+            "Seed checkpoint `$source_path` contains unknown sector $label.")
+
+        if haskey(ed_data.ed_scan_res, target_idx)
+            cached_values, cached_vectors = ed_data.ed_scan_res[target_idx]
+            length(cached_values) >= nev && size(cached_vectors, 2) >= nev && continue
+        end
+        ed_data.ed_scan_res[target_idx] = (values, vectors)
+        ed_data.sector_dims[target_idx] = loaded.sector_dims[source_idx]
+        imported += 1
+    end
+    return imported
 end
 
 function checkpoint_problem_matches(ed_data, model, filling; flux=nothing)
