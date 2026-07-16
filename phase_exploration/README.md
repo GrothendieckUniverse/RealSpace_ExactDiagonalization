@@ -24,7 +24,7 @@ and the common diagnostic/scaling points:
 |:--|--:|--:|--:|
 | AHC | `-0.54(2+2sqrt(2))` | `-0.54` | three lowest eigenstates |
 | FCI | `-1.0` | `-0.2071067812` | three lowest eigenstates |
-| candidate CDW | `0.25(2+2sqrt(2))` | `0.25` | three lowest eigenstates |
+| candidate CDW | `0.21(2+2sqrt(2))` | `0.21` | three lowest eigenstates |
 
 The AHC and positive-side points were deliberately moved closer to the FCI,
 where the same phase is more likely to be sampled on all finite geometries.
@@ -71,8 +71,8 @@ This performs a zero-flux all-sector scan, chooses the configured number of
 globally lowest eigenstates (retaining both momentum sector and in-sector
 level), and generates:
 
-- all-momentum-sector spectrum flow over three flux quanta (145 points,
-  i.e. 48 intervals per flux quantum);
+- all-momentum-sector spectrum flow over three flux quanta (61 points,
+  i.e. 20 intervals per flux quantum);
 - the manifold charge pump over one flux quantum;
 - a spatial/orbital cut ES for the absolute ground state;
 - the Li-Haldane/Regnault-Bernevig momentum-resolved particle ES of the

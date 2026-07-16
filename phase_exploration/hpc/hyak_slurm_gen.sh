@@ -42,9 +42,9 @@ COMPETING_PHASES=(AHC CDW)
 SWEEP_GEOMETRIES=(3x4 3x5 3x6)
 DIAGNOSTIC_GEOMETRIES=(3x4 3x5 3x6)
 GAP_GEOMETRIES=(3x3 3x4 3x5 3x6 3x7)
-FLOW_STEPS=145
-DIAGNOSTIC_PROTOCOL="competing_points_v4_tpp_m0p54_p0p25_flow${FLOW_STEPS}"
-GAP_PROTOCOL="competing_points_v3_tpp_m0p54_p0p25"
+FLOW_STEPS=61
+DIAGNOSTIC_PROTOCOL="competing_points_v5_tpp_m0p54_p0p21_flow${FLOW_STEPS}"
+GAP_PROTOCOL="competing_points_v4_tpp_m0p54_p0p21"
 
 GENERATED_DIR="${SCRIPT_DIR}/generated"
 HYAK_LOG_DIR="${REPO_DIR}/phase_exploration/hpc/logs"
@@ -247,7 +247,7 @@ for geometry in "${DIAGNOSTIC_GEOMETRIES[@]}"; do
   for phase in "${COMPETING_PHASES[@]}"; do
     phase_lower="${phase,,}"
     job="${GENERATED_DIR}/diagnostics_${geometry}_${phase_lower}.sbatch"
-    write_header "${job}" "tpp_dx3_${geometry}_${phase_lower}"
+    write_header "${job}" "tpp_dx5_${geometry}_${phase_lower}"
     cat >> "${job}" <<EOF
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/${DIAGNOSTIC_PROTOCOL}.done
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/zero_flux_spectrum.csv
@@ -276,7 +276,7 @@ for geometry in "${GAP_GEOMETRIES[@]}"; do
   for phase in "${COMPETING_PHASES[@]}"; do
     phase_lower="${phase,,}"
     job="${GENERATED_DIR}/charge_gap_${geometry}_${phase_lower}.sbatch"
-    write_header "${job}" "tpp_cg2_${geometry}_${phase_lower}"
+    write_header "${job}" "tpp_cg4_${geometry}_${phase_lower}"
     cat >> "${job}" <<EOF
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/${GAP_PROTOCOL}.done
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/charge_gap.csv

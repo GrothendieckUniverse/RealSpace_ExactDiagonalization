@@ -26,10 +26,10 @@ The new common diagnostic points are
 | working label | physical $t''$ | numerator $x=(2+2\sqrt2)t''$ |
 |:--|--:|--:|
 | AHC | $-0.54$ | $-2.6073506474$ |
-| candidate CDW | $+0.25$ | $+1.2071067812$ |
+| candidate CDW | $+0.21$ | $+1.0139696962$ |
 
-The already-computed sweep points $x=-2.6$ and $x=1.2$, corresponding to
-$t''=-0.53848$ and $0.24853$, are close enough to preview the zero-flux
+The already-computed sweep points $x=-2.6$ and $x=1.0$, corresponding to
+$t''=-0.53848$ and $0.20711$, are close enough to preview the zero-flux
 physics.  The production pump, flow, entanglement, and charge-gap calculations
 should use the exact values above.
 
@@ -170,13 +170,13 @@ the state identities and finite-size crossing mechanism visible.
 
 ## 3. What the existing nearby spectra already say
 
-At $x=1.2$, or $t''=0.248528$, the global-rank data are
+At $x=1.0$, or $t''=0.207107$, the global-rank data are
 
 | geometry | observed low-energy pattern | $E_3-E_1$ | $E_4-E_3$ | $E_4-E_1$ | $\Delta_{\cal F}^{\rm signed}$ |
 |:--|:--|--:|--:|--:|--:|
-| $3\times4$ | 8 states below $0.071$ | 0.0250 | $\simeq0$ | 0.0250 | $-0.2550$ |
-| $3\times5$ | singlet, then a four-state cluster at $0.3432$ | 0.3432 | $\simeq0$ | 0.3432 | $-0.0842$ |
-| $3\times6$ | several intruders; FCI level 3 is global rank 24 | 0.0768 | $\simeq0$ | 0.0768 | $-0.2683$ |
+| $3\times4$ | 8 states below $0.0667$ | 0.0540 | $\simeq0$ | 0.0540 | $-0.2098$ |
+| $3\times5$ | singlet, then a four-state cluster at $0.2664$ | 0.2664 | $\simeq0$ | 0.2664 | $-0.0525$ |
+| $3\times6$ | several intruders; FCI level 3 is global rank 21 | 0.0776 | 0.0297 | 0.1073 | $-0.2212$ |
 
 The $3\times4$ observation is therefore correct: the three-state isolation
 gap has closed and a much larger low-energy band has formed.  It is reasonable
@@ -185,10 +185,10 @@ three-state manifold has lost its identity, a unique three-state “roton gap”
 is no longer well defined.
 
 The $3\times5$ singlet does not rescue a three-state interpretation.  The two
-other FCI-sector states lie at $0.4274$, above a four-state cluster at
-$0.3432$.  The signed FCI isolation is consequently negative.  On
+other FCI-sector states lie at $0.3189$, above a four-state cluster at
+$0.2664$.  The signed FCI isolation is consequently negative.  On
 $3\times6$, all three reference states are in $(0,3)$, but their global
-ranks are 2, 7, and 24.  Selecting merely the three globally lowest states or
+ranks are 2, 3, and 21.  Selecting merely the three globally lowest states or
 merely the lowest state of $(0,3)$ answers a different question.
 
 This evidence establishes that the positive point is outside the finite-size
@@ -336,16 +336,16 @@ A genuine finite-size CDW diagnosis requires one coherent package:
 5. A pump computed for that actual isolated tower, not for a forced
    three-state selection inherited from the FCI.
 
-At $x=1.2$, the structure-factor maxima are respectively
-$(2\pi/3,-\pi/2)$, $(-2\pi/3,2\pi/5)$, and
-$(2\pi/3,-2\pi/3)$ on $3\times4$, $3\times5$, and $3\times6$.
+At $x=1.0$, the structure-factor maxima are respectively
+$(-2\pi/3,\pi/2)$, $(-2\pi/3,2\pi/5)$, and
+$(-2\pi/3,2\pi/3)$ on $3\times4$, $3\times5$, and $3\times6$.
 Together with the different low-energy multiplicities, this is not yet a
 common CDW pattern.
 
-Moving the diagnostic point from $t''=0.31066$ to $0.25$ is sensible:
+Moving the diagnostic point from $t''=0.31066$ to $0.21$ is sensible:
 finite-size phase boundaries can drift, and the old point is visibly far from
 the FCI boundary on some clusters.  It is nevertheless not guaranteed that
-$t''=0.25$ realizes the same phase on every size.  The new point is a fairer
+$t''=0.21$ realizes the same phase on every size.  The new point is a fairer
 comparison point whose phase must be inferred from the tests above, not from
 its preset label.
 
@@ -377,7 +377,7 @@ Each figure has two panels:
 - **Fixed FCI reference:** signed isolation, same-sector direct gap, and FCI
   reference width.
 
-The vertical guides mark $t''=-0.54$ and $+0.25$.  In the right panel, the
+The vertical guides mark $t''=-0.54$ and $+0.21$.  In the right panel, the
 zero line has a direct meaning: crossing below it says that other states have
 entered below the top of the fixed FCI manifold.  A finite green same-sector
 gap at the same crossing is evidence for an inter-sector, first-order-like
@@ -398,8 +398,8 @@ marker filenames prevent the submission helper from mistaking old result files
 for the new campaign.  Confirmed FCI data are left untouched.
 
 The spectral flow remains a **one-dimensional** boundary-twist path over three
-flux quanta.  It now uses 145 points, or 48 intervals per flux quantum, so the
-curves and flux-dependent isolation gaps are visually smooth.  No second twist
+flux quanta.  It now uses 61 points, or 20 intervals per flux quantum, balancing
+smooth curves against diagonalization cost.  No second twist
 angle, two-dimensional twist torus, or many-body Chern integration is added.
 
 Generate and submit with

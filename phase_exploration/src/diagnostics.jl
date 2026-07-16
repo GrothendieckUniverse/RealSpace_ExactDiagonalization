@@ -96,7 +96,7 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     observables::Vector{Symbol}=[:flow, :pump, :spatial_es, :pes],
     zero_nev::Int=10,
     flow_nev::Int=3,
-    flow_flux_values::Vector{Float64}=collect(range(0.0, 3.0; length=145)),
+    flow_flux_values::Vector{Float64}=collect(range(0.0, 3.0; length=61)),
     pump_flux_values::Vector{Float64}=collect(range(0.0, 1.0; length=17)),
     flux_direction::Int=1,
     polarization_direction::Int=2,

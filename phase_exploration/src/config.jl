@@ -36,7 +36,7 @@ end
 const PHASE_SPECS = Dict{Symbol,PhaseSpec}(
     :AHC => PhaseSpec(:AHC, -0.54 * TPP_DENOMINATOR, 3),
     :FCI => PhaseSpec(:FCI, -1.0, 3),
-    :CDW => PhaseSpec(:CDW, 0.25 * TPP_DENOMINATOR, 3),
+    :CDW => PhaseSpec(:CDW, 0.21 * TPP_DENOMINATOR, 3),
 )
 
 # The symmetry slots that form the already-established FCI manifold at its
