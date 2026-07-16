@@ -1,417 +1,1510 @@
-# Entanglement-spectrum counting: a derivation-led guide
+# Entanglement spectra in this project
 
-This note explains the two different entanglement spectra used in this study:
+## What the two plots do—and do not—diagnose
 
-1. the **particle entanglement spectrum (PES)**, whose low-lying counting
-   diagnoses bulk quasihole states; and
-2. the **spatial-orbital entanglement spectrum**, whose properly
-   momentum-resolved low-lying branch can diagnose boundary/edge states.
+This note is organized around the questions one should ask while looking at
+the two entanglement-spectrum plots produced by this repository.
 
-The two spectra start from the same Schmidt-decomposition idea, but they cut
-the Hilbert space in different ways and therefore count different physical
-objects.  Most importantly, neither diagnosis requires the microscopic FCI
-Hamiltonian or its bulk wavefunction to be a conformal field theory (CFT).
-CFT gives an elegant continuum construction of the Laughlin state and its
-long-wavelength edge, but the PES counting also has a direct zero-mode and
-combinatorial derivation.
+The short answer is:
 
-### Three counting problems that must not be conflated
+1. The **particle entanglement spectrum (PES)** is a bulk diagnostic.  Its
+   universal low band is compared with the number and momenta of Laughlin
+   quasihole zero modes.
+2. The present **site real-space entanglement spectrum (RSES)** makes a
+   spatial strip cut.  A suitably momentum-resolved low branch can diagnose
+   virtual edge physics.
+3. The present RSES file is resolved only by the number of particles in the
+   strip.  The number of dots in each such block is mostly ordinary
+   Hilbert-space rank.  It is **not** the Li--Haldane chiral-edge counting.
 
-This study encounters three numerically different sequences:
+Thus the physical intuition in “particle cut = quasiholes, spatial cut =
+edges” is essentially correct, but it needs two qualifications.
 
-| counting problem | what is counted | example in this study |
+- There are more than two named cuts in the literature.  An **orbital cut**
+  divides Landau-level or hybrid-Wannier orbitals; a **real-space cut** divides
+  physical positions or lattice sites; a **particle cut** divides particles.
+  The first two are boundary cuts, but they are not identical constructions.
+- A boundary cut is not an edge diagnostic merely because a Schmidt
+  decomposition was performed.  One must resolve momentum parallel to the
+  cut and identify the universal low-lying branch.  Raw Schmidt rank has no
+  such meaning.
+
+The most important distinction in this note is therefore
+
+| quantity being counted | physical content | sequence in this project |
 |:--|:--|:--|
-| raw spatial Schmidt-rank ceiling | dimensions of ordinary fermionic Fock spaces on the two sides of the cut | `1,12,66,153,18,1` for `3x5` |
-| chiral-edge counting | bosonic edge-density excitations at successive excess momenta, within one fixed charge/topological sector | `1,1,2,3,5,7,11,...` |
-| particle-ES counting | bulk Laughlin quasihole states obeying the $(1,3)$ admissibility rule | 75 for `3x5`, 117 for `3x6` when $N_A=2$ |
+| all nonzero spatial Schmidt values in an $N_A$ block | kinematic Fock-space rank, generally nonuniversal | e.g. `1,12,66,153,18,1` for `3x5` |
+| low PES levels at fixed particle-cut size $N_A$ | bulk quasihole zero modes | 42, 75, 117 for the current `3x4`, `3x5`, `3x6` data at $N_A=2$ |
+| low states versus excess edge momentum at fixed edge charge | chiral edge descendants | $1,1,2,3,5,7,11,\ldots$ for one $U(1)$ edge |
 
-Only the second and third rows contain universal topological information.
-The first row is a kinematic upper bound: a generic fermionic state with the
-same particle number and bipartition can saturate it.  In particular,
-`1,12,66,153,18,1` is **not** a desired Laughlin edge sequence.  Sections
-3.2 and 3.3 derive the first two rows from their distinct generating
-functions.
+Only the last two rows can provide the topological counting tests discussed
+below.
 
-## 1. Common language: what an entanglement spectrum is
+---
 
-For any bipartition of a pure state,
+## 1. Common language
+
+### 1.1 Schmidt values and entanglement energies
+
+For a pure state and a tensor-product bipartition
+$\mathcal H=\mathcal H_A\otimes\mathcal H_B$,
 
 $$
 |\Psi\rangle
-  = \sum_\alpha s_\alpha
-    |\alpha\rangle_A |\alpha\rangle_B,
+ =\sum_\alpha s_\alpha
+   |\alpha\rangle_A|\alpha\rangle_B,
 \qquad
-\sum_\alpha s_\alpha^2=1,
+\lambda_\alpha=s_\alpha^2.
 $$
 
-the reduced density matrix and entanglement energies are
+The reduced density matrix is
 
 $$
-\rho_A=\operatorname{Tr}_B|\Psi\rangle\langle\Psi|
-      =\sum_\alpha \lambda_\alpha
-       |\alpha\rangle\langle\alpha|,
-\qquad
-\lambda_\alpha=s_\alpha^2,
-\qquad
+\rho_A=\operatorname{Tr}_B|\Psi\rangle\langle\Psi|,
+$$
+
+and the entanglement energies are
+
+$$
 \xi_\alpha=-\log\lambda_\alpha.
 $$
 
-Equivalently, define the entanglement Hamiltonian
-$H_E=-\log\rho_A$, up to an additive constant.  Its eigenvalues are the
-entanglement spectrum.  A useful topological statement is never merely
-"there is a gap in $\xi$": one must also check that the number of levels and
-their symmetry sectors below that gap agree with a theoretically expected
-low-energy subspace.
+The low part of the entanglement plot means the **largest** eigenvalues of
+$\rho_A$.  Absolute entanglement energies, spacings, velocities, and the
+high-energy part of the spectrum are generally nonuniversal.  The useful
+fingerprint is a separated low band with the correct symmetry-resolved
+counting.
 
-## 2. Particle entanglement spectrum: bulk quasihole counting
+### 1.2 The symbol $N_A$ means two different things in the two calculations
 
-### 2.1 What the particle cut does
+This is a frequent source of confusion.
 
-The particle cut keeps $N_A$ particles and traces out $N_B=N-N_A$ particles;
-it does **not** select a spatial region.  In first-quantized notation,
+- In a **PES**, one first chooses exactly $N_A$ retained particles.  Changing
+  $N_A$ constructs a different reduced density matrix, with its own trace-one
+  normalization and its own arbitrary additive offset in $\xi$.
+- In a **spatial ES**, region A is fixed in real space.  Its particle number
+  fluctuates, so $N_A=0,1,\ldots,N$ labels charge blocks inside one and the
+  same $\rho_A$.
+
+Consequently, a sweep of PES cut size should normally be shown as separate
+panels, one panel per $N_A$.  By contrast, plotting all spatial $N_A$ blocks
+on one axis is meaningful because their relative probability weights belong
+to one density matrix.
+
+---
+
+## 2. Particle entanglement spectrum
+
+### 2.1 Definition and why the full ground manifold is used
+
+The particle cut retains $N_A$ indistinguishable particles anywhere in the
+sample and traces out $N_B=N-N_A$ particles.  In first-quantized notation,
 
 $$
 \rho_A(Z_A,Z_A')
- = \binom{N}{N_A}
-   \int dZ_B\,
-   \Psi(Z_A,Z_B)\Psi^*(Z_A',Z_B),
+ =\binom{N}{N_A}
+  \int dZ_B\,
+  \Psi(Z_A,Z_B)\Psi^*(Z_A',Z_B).
 $$
 
-where $Z_A=(z_1,\ldots,z_{N_A})$.  In the code this integral is the finite
-Fock-basis contraction $\rho_A=MM^\dagger$, followed by decomposition into
-the subsystem translation sectors $(K_1,K_2)$.
+It creates no physical boundary.  Its natural quantum numbers on a
+translation-invariant torus are the two subsystem momenta $(K_1,K_2)$.
 
-On a torus the topological ground states form a multiplet.  The PES therefore
-uses the basis-independent projector onto the full low-energy manifold,
+For a topologically ordered state on a torus, the ground space has dimension
+$d$.  The appropriate, basis-independent input is the normalized projector
+onto that space,
 
 $$
-\rho_{\rm GS}=\frac1d\sum_{a=1}^{d}|\Psi_a\rangle\langle\Psi_a|,
+\rho_{\rm GS}
+ =\frac1d\sum_{a=1}^d|\Psi_a\rangle\langle\Psi_a|,
 \qquad
-\rho_A=\operatorname{Tr}_B\rho_{\rm GS}.
+\rho_A^{\rm PES}=\operatorname{Tr}_{N_B}\rho_{\rm GS}.
 $$
 
-A unitary rotation among the $d$ ground states leaves this density matrix
-unchanged.  For the $\nu=1/3$ FCI, $d=3$.
+Any unitary rotation of the $d$ ground states leaves $\rho_{\rm GS}$
+unchanged.  This matters particularly for `3x6`, where the three current FCI
+manifold states are levels 1, 2, and 3 of the same momentum sector $(0,3)$.
 
-### 2.2 The Laughlin wavefunction and its clustering property
+### 2.2 What can and cannot imply the $(1,3)$ rule
 
-On the plane, the fermionic Laughlin state at $\nu=1/m$, with odd $m$, is
-
-$$
-\Psi_m(z_1,\ldots,z_N)
- = \prod_{i<j}(z_i-z_j)^m
-   \exp\!\left[-\sum_i\frac{|z_i|^2}{4\ell_B^2}\right].
-$$
-
-For this study $m=3$.  When two fermions approach one another,
+The rule
 
 $$
-\Psi_3\sim (z_i-z_j)^3.
+\boxed{\text{no more than one particle in any three consecutive orbitals}}
 $$
 
-Thus relative-angular-momentum-one pairs are absent.  The state is the
-densest zero-energy state of the $V_1$ Haldane pseudopotential.  This cubic
-coincidence zero is the physical origin of the exclusion structure used
-below.
+is equivalently
 
-### 2.3 What the “generalized Pauli principle” actually means
+$$
+n_j+n_{j+1}+n_{j+2}\le 1,
+$$
 
-Write a Landau-level many-body basis as occupation strings of guiding-center
-orbitals.  The densest or **root** pattern of the $1/3$ Laughlin state is
+with cyclic indices on a torus.  Its densest occupation patterns are the
+three translations of
 
 ```text
 100 100 100 100 ...
 ```
 
-The corresponding $(1,3)$ admissibility rule is
+There is an essential logical point:
+
+> Chern number $C=1$ and filling $\nu=1/3$ do not, by themselves, prove the
+> $(1,3)$ rule.
+
+The same band and filling can support a charge-density wave, a compressible
+state, or another correlated phase.  Even the long-distance $U(1)_3$
+topological field theory fixes anyon charges, braiding, Hall response, and
+torus degeneracy, but it does not by itself contain the finite set of
+guiding-center orbitals whose 117 momentum-resolved quasihole states we count
+in `3x6`.
+
+The $(1,3)$ counting becomes the correct target after specifying the
+**fermionic Laughlin zero-mode/clustering class**, or after hypothesizing
+that the lattice state is adiabatically connected to that class.  The PES
+then tests that hypothesis.  It does not assume the conclusion merely from
+the filling.
+
+The next three subsections give complementary routes to the rule.
+
+### 2.3 Parent-Hamiltonian and clustering route: no CFT required
+
+Project two-dimensional fermions into one Landau level and decompose their
+interaction into relative-angular-momentum channels.  Fermi statistics
+allows only odd pair angular momenta.  The $V_1$ Haldane pseudopotential is a
+positive operator that penalizes the closest allowed pair channel,
 
 $$
-n_j+n_{j+1}+n_{j+2}\le 1
+H_{V_1}=V_1\sum_{i<j}P_{ij}(L_{\rm rel}=1),
+\qquad V_1>0.
 $$
 
-for every three consecutive orbitals, with the indices understood cyclically
-on a torus.  More generally, a $(k,r)$-admissible root pattern has at most
-$k$ particles in any $r$ consecutive orbitals.
+A zero mode must have no relative-angular-momentum-one component.  An
+antisymmetric wavefunction already vanishes at least linearly when
+$z_i\to z_j$; eliminating the linear channel forces the next possible odd
+power,
 
-This is “generalized Pauli” because ordinary fermionic Pauli exclusion only
-says $n_j\le1$ for one orbital; the $(1,3)$ rule adds a correlation hole
-extending over three guiding centers.
+$$
+\Psi\sim(z_i-z_j)^3.
+$$
 
-There is an important subtlety: this does **not** say that every Slater
-determinant with nonzero coefficient in the isotropic Laughlin wavefunction
-obeys the literal spacing rule.  The full state also contains configurations
-obtained by inward pair squeezing.  Rather, admissible occupation strings
-label dominant/root configurations and index the independent quasihole
-zero-mode space.  In the thin-cylinder or thin-torus limit the root string
-becomes the dominant electrostatic pattern, making the rule especially
-transparent.  Adiabatically returning to the isotropic torus changes the
-coefficients but not the zero-mode counting.
+The word “zero” now occurs in two different senses that must not be mixed up.
 
-The same structure can be expressed through Jack polynomials: the Laughlin
-polynomial is generated from its root partition by squeezing, while its
-clustering condition selects the admissible roots.  This is one route to the
-generalized exclusion rule, but Jack-polynomial or CFT machinery is not
-needed for the counting derivation below.
+- A **coincidence zero** is the cubic vanishing of the first-quantized
+  wavefunction as two particles meet.
+- A **zero mode** is a many-body eigenstate with exactly zero energy under
+  the positive-semidefinite $V_1$ Hamiltonian.
+- A `0` in an occupation string merely says that one chosen guiding-center
+  orbital is empty.  Such individual occupation zeros are not conserved
+  under a change of torus aspect ratio.
 
-### 2.4 Why $(1,3)$ is the correct rule for this checkerboard system
+At the largest possible density, one third, the cubic clustering condition
+has a three-dimensional torus zero-mode space.  At lower density it has a
+larger quasihole zero-mode space.
 
-The checkerboard lattice has two sites per unit cell.  For an
-$L_1\times L_2$ torus,
+#### What the thin-torus limit actually says
+
+Choose Landau-gauge orbitals, which are localized guiding-center strips, and
+make one circumference very small.  After an appropriate rescaling, the
+dominant terms of the projected interaction are diagonal guiding-center
+repulsions.  The dominant root configurations of the densest zero modes then
+have two empty guiding centers between occupied ones:
+
+```text
+...100100100...
+```
+
+The three translations of this string give the three root patterns at exact
+$1/3$ filling.  With extra orbitals, every string satisfying
+
+$$
+n_j+n_{j+1}+n_{j+2}\le1
+$$
+
+is an allowed quasihole root.  Domain walls in these strings are the
+thin-cylinder form of charge-$e/3$ quasiholes.
+
+The phrase “the state follows the $(1,3)$ rule” must be interpreted carefully.
+
+- **In the strict root/thin-torus description:** the occupation string itself
+  obeys the rule.
+- **At finite aspect ratio:** the exact zero mode is generally a superposition
+  of the root and configurations obtained from it by pair squeezing.  Many
+  Slater determinants in that superposition do not literally obey the
+  three-orbital spacing rule.
+- **What remains true:** the independent zero modes can be labeled by
+  $(1,3)$-admissible roots, and their number and translation sectors are
+  obtained by counting those roots.
+
+Thus $(1,3)$ does not mean that the isotropic wavefunction is the single
+product state $|100100\ldots\rangle$.  At exact filling that string is only
+the dominant root of one thin-torus sector; its translations give the other
+two roots.
+
+#### Why the zero-mode count can remain constant
+
+Let $H(s)$ continuously change the guiding-center metric or torus aspect
+ratio, with $s=0$ thin and $s=1$ isotropic.  Assume throughout the path that
+
+1. $H(s)\ge0$ remains the same $V_1$ parent-Hamiltonian class;
+2. translations remain symmetries; and
+3. a nonzero spectral gap separates the zero-energy space from positive
+   energies.
+
+Let $P_0(s)$ be the spectral projector onto zero energy.  Its rank is an
+integer.  It cannot change continuously; a change would require a positive
+energy level to reach zero or a zero mode to leave zero, which closes the
+assumed zero-mode gap.  Similarly, if $P_K$ projects onto translation sector
+$K$, then
+
+$$
+d_K(s)=\operatorname{Tr}[P_0(s)P_K]
+$$
+
+is an integer and cannot change without a symmetry-preserving level crossing
+at zero.  The eigenvectors and their occupation coefficients can vary
+strongly, but the zero-mode dimension $\sum_Kd_K$ and its momentum allocation
+remain fixed.
+
+This is the precise content of the adiabatic argument.  It protects a
+subspace, not a binary string.
+
+Strictly taking the circumference to zero can discard exponentially small
+off-diagonal terms and may introduce accidental degeneracies in the truncated
+electrostatic Hamiltonian.  The safe continuity statement starts at a small
+but finite circumference with the full pseudopotential, or supplements the
+thin-limit intuition with the exact clustering/zero-mode algebra.
+
+The statement is also special to the parent-Hamiltonian path.  Under a
+generic deformation within the same topological phase, the physical energy
+ground state need not remain an exact $V_1$ zero mode and its coincidence
+zeros need not remain exactly cubic.  What can survive is an adiabatically
+identifiable Laughlin-like low PES band.  Exact polynomial zeros are stronger
+microscopic structure than topological order alone.
+
+There is also an important logical limitation: adiabaticity by itself does
+not prove that the protected dimension equals the number of admissible
+strings.  That correspondence comes from the additional zero-mode algebra:
+clustering forces a triangular structure in the occupation basis, each
+zero mode has an admissible dominant pattern, and the admissible patterns
+generate independent zero modes.  Jack polynomials provide one explicit
+version of this construction; purely second-quantized dominance-pattern
+proofs provide another.
+
+There are also fully second-quantized derivations: the pseudopotential can be
+treated as a frustration-free guiding-center lattice Hamiltonian, and all
+zero modes can be constructed algebraically from dominance patterns.  No
+analytic trial polynomial or CFT is required for that formulation.
+
+### 2.4 Jack-polynomial route, with the fermionic shift made explicit
+
+The Jack-polynomial language is not a separate physical assumption.  It is a
+special basis of symmetric polynomials in which three facts become
+simultaneously visible:
+
+1. one dominant occupation pattern labels the polynomial;
+2. all other monomials lie below it in a precise squeezing order; and
+3. at special negative Jack parameter, the polynomial has the clustering
+   zeros required by an FQH parent Hamiltonian.
+
+The definitions come first.
+
+#### Partitions and occupation configurations
+
+A partition of total degree $M$ into at most $N$ parts is an ordered list
+
+$$
+\lambda=(\lambda_1,\lambda_2,\ldots,\lambda_N),
+\qquad
+\lambda_1\ge\lambda_2\ge\cdots\ge\lambda_N\ge0,
+\qquad
+\sum_i\lambda_i=M.
+$$
+
+In a lowest-Landau-level polynomial, $\lambda_i$ is a one-particle orbital
+angular momentum.  For bosons, repeated parts are allowed.  The equivalent
+occupation numbers are
+
+$$
+n_m(\lambda)=\#\{i:\lambda_i=m\}.
+$$
+
+For example,
+
+$$
+\lambda=(4,2,0)
+\quad\longleftrightarrow\quad
+n_0n_1n_2n_3n_4=10101.
+$$
+
+The monomial symmetric polynomial $m_\lambda$ is obtained by symmetrizing
+$z_1^{\lambda_1}\cdots z_N^{\lambda_N}$ over distinct permutations of the
+exponents.  The collection of all $m_\lambda$ is an ordinary basis of
+symmetric homogeneous polynomials.
+
+For fermions, antisymmetry requires all occupied orbitals to be distinct, so
+the corresponding partition is strict,
+
+$$
+\mu_1>\mu_2>\cdots>\mu_N\ge0,
+$$
+
+and labels a Slater determinant rather than a symmetric monomial.
+
+#### What a Jack polynomial is
+
+For every partition $\lambda$ and parameter $\alpha$, the monic Jack
+polynomial $J_\lambda^{(\alpha)}$ is a symmetric homogeneous polynomial with
+the triangular expansion
+
+$$
+J_\lambda^{(\alpha)}
+=m_\lambda
+ +\sum_{\kappa\prec\lambda}
+   c_{\lambda\kappa}(\alpha)m_\kappa.
+$$
+
+It is uniquely fixed by this leading term together with being an eigenfunction
+of the Jack/Calogero--Sutherland Laplace--Beltrami operator.  In one common
+convention that operator is
+
+$$
+\mathcal D_\alpha
+=\sum_i(z_i\partial_i)^2
+ +\frac1\alpha\sum_{i<j}
+   \frac{z_i+z_j}{z_i-z_j}
+   (z_i\partial_i-z_j\partial_j).
+$$
+
+Different normalizations of $J$ or $\mathcal D_\alpha$ do not change the root
+partition or the squeezing relations used here.
+
+The symbol $\kappa\prec\lambda$ means that $\kappa$ is dominated by
+$\lambda$:
+
+$$
+\sum_{i=1}^{r}\kappa_i
+\le
+\sum_{i=1}^{r}\lambda_i
+\quad\text{for every }r,
+\qquad
+\sum_i\kappa_i=\sum_i\lambda_i.
+$$
+
+Equivalently, $\kappa$ can be reached through repeated inward pair squeezes.
+
+#### What squeezing means
+
+Choose two occupied orbitals $a<b$ and move them toward one another,
+
+$$
+(a,b)\longrightarrow(a+s,b-s),
+\qquad
+0<s\le\frac{b-a}{2}.
+$$
+
+This preserves particle number and total angular momentum.  For fermions the
+new orbitals must remain distinct; for bosons they may coincide.  For example,
+a bosonic pair in orbitals 0 and 4 can squeeze to 1 and 3 or to two particles
+in orbital 2:
+
+```text
+10001  ->  01010  ->  00200.
+```
+
+The root configuration is the unique maximal or unsqueezed partition
+$\lambda$ multiplying $m_\lambda$ with coefficient one.  It is not the whole
+wavefunction.  The Jack is the root plus a definite linear combination of
+its squeezed descendants.
+
+#### What clustering means for the Laughlin Jack
+
+For special negative rational values
+
+$$
+\alpha=-\frac{k+1}{r-1},
+$$
+
+well-defined Jacks with $(k,r)$-admissible roots have an FQH clustering
+property.  The admissibility condition can be written
+
+$$
+\lambda_i-\lambda_{i+k}\ge r,
+$$
+
+equivalently: no more than $k$ particles occupy any $r$ consecutive orbitals.
+
+For the bosonic Laughlin state, $k=1$, $r=2$, and $\alpha=-2$.  Its densest
+root obeys
+
+$$
+\lambda_i-\lambda_{i+1}\ge2
+$$
+
+and is
+
+```text
+1010101...
+```
+
+The associated Jack vanishes quadratically when two coordinates coincide.
+At the densest flux it is exactly
+
+$$
+J_{\lambda_{1/2}}^{(-2)}(z)
+\propto\prod_{i<j}(z_i-z_j)^2.
+$$
+
+With additional orbitals, all $(1,2)$-admissible roots label the bosonic
+Laughlin quasihole zero modes; their Jacks contain the squeezed monomials
+needed to satisfy clustering.
+
+#### Why the fermionic $1/3$ problem is written as a bosonic Jack times a
+Vandermonde
+
+Every antisymmetric polynomial is divisible by the Vandermonde determinant
+
+$$
+\Delta(z)=\prod_{i<j}(z_i-z_j)
+=\det[z_i^{N-j}].
+$$
+
+After dividing by $\Delta$, the quotient is symmetric.  This is a unique
+algebraic conversion: exchanging two coordinates changes the sign of both
+the original polynomial and $\Delta$, so the quotient is invariant.  It is
+not necessary to interpret $\Delta$ as a composite-fermion wavefunction.
+It simply supplies the minimum zero required by Fermi statistics.
+
+For the fermionic $1/3$ Laughlin polynomial,
+
+$$
+\Psi_{1/3}(z)
+=\prod_{i<j}(z_i-z_j)^3
+=\Delta(z)
+ \underbrace{\prod_{i<j}(z_i-z_j)^2}_{
+ J_{\lambda_{1/2}}^{(-2)}(z)}.
+$$
+
+Thus the symmetric quotient happens to be the bosonic $1/2$ Laughlin Jack.
+This factorization is canonical because one Vandermonde is the universal
+antisymmetry factor.  Refactoring the same polynomial cannot change its
+intrinsic dominant partition or zero-mode dimension.  A purported
+factorization that gives different counting has either changed the state or
+misidentified the dominant term.
+
+#### The staircase and why it does not disappear
+
+Expanding the determinant shows that its orbital exponents are permutations
+of
+
+$$
+\delta=(N-1,N-2,\ldots,1,0).
+$$
+
+This is called the staircase partition.  When a symmetric root $\lambda$ is
+multiplied by $\Delta$, the leading fermionic Slater partition is
+
+$$
+\boxed{\mu=\lambda+\delta}
+$$
+
+component by component.  The staircase has not vanished: it converts the
+bosonic weak inequalities into the strict inequalities required by Pauli
+exclusion and adds one unit to every adjacent orbital spacing,
+
+$$
+\mu_i-\mu_{i+1}
+=(\lambda_i-\lambda_{i+1})
+ +(\delta_i-\delta_{i+1})
+\ge2+1=3.
+$$
+
+For $N=3$, the complete root conversion is
+
+$$
+\lambda=(4,2,0)
+\quad\longleftrightarrow\quad10101,
+$$
+
+$$
+\delta=(2,1,0),
+$$
+
+$$
+\mu=\lambda+\delta=(6,3,0)
+\quad\longleftrightarrow\quad1001001.
+$$
+
+This is the fermionic $(1,3)$ root.  Sometimes fermionic partitions are
+reported only after subtracting the universal staircase; in that convention
+$\delta$ becomes invisible in the notation, but not in the physics or the
+orbital spacing.
+
+The conclusion is again about roots, not every Slater determinant.  The
+fermionic Laughlin state and its quasihole zero modes contain squeezed
+Slaters that can violate literal three-orbital spacing.  The independent
+zero modes are indexed by the unsqueezed fermionic roots satisfying $(1,3)$.
+
+Jack polynomials are most directly formulated on the plane, disk, or sphere,
+where lowest-Landau-level states are ordinary polynomials.  A torus state is
+built from theta functions and has an additional center-of-mass structure,
+so it is not literally the same Jack polynomial.  What carries over is the
+local clustering condition and its guiding-center root rule.  Periodic
+boundary conditions turn the open $(1,3)$ rule into the cyclic rule counted
+in Section 2.7, while magnetic translations determine the torus momentum
+sectors.
+
+#### How Jack ideas enter the PES argument
+
+The three pieces now have distinct jobs.
+
+- **Clustering** identifies the allowed vector space: after a particle cut,
+  every conditional A-particle function still vanishes cubically when two A
+  coordinates meet, so it lies in the Laughlin quasihole zero-mode space.
+- **Admissible roots** count a basis of that zero-mode space.  For fermions
+  they satisfy $(1,3)$.
+- **Squeezing** explains why the actual conditional functions and PES
+  eigenvectors are not single admissible strings.  Each is a superposition
+  of root configurations and their squeezed descendants.
+
+The Jack construction therefore does not assert “one PES eigenvalue equals
+one product state.”  It supplies a dimension and symmetry-sector count for
+the vector space in which the ideal PES has support.  Section 2.6 derives
+that support/rank statement directly.
+
+### 2.5 Why the lattice FCI inherits this as a diagnostic
+
+For the checkerboard lattice,
 
 $$
 N_{\rm cell}=L_1L_2,
 \qquad
-N_{\rm site}=2L_1L_2,
+N_{\rm site}=2L_1L_2.
+$$
+
+There are two microscopic sites per unit cell, but one isolated $C=1$ band
+contains only one one-particle state per unit cell.  The Landau-level orbital
+number is therefore represented by
+
+$$
+N_\phi\longleftrightarrow N_{\rm cell}=L_1L_2,
+$$
+
+not by the number of sites.  In this project,
+
+$$
+\frac{N}{N_{\rm site}}=\frac16,
 \qquad
-N=\frac{L_1L_2}{3}.
+\nu_{\rm band}=\frac{N}{N_{\rm cell}}=\frac13.
 $$
 
-Thus the physical site filling is $N/N_{\rm site}=1/6$, but the filling of
-the relevant Chern band is
+On a torus there is no spherical shift, so the commensurate $1/3$ ground
+state has
 
 $$
-\nu=\frac{N}{N_{\rm cell}}=\frac13.
+N_\phi=3N.
 $$
 
-A Chern-one band contains one one-particle state per unit cell, so
-$N_{\rm cell}$ plays the role of the Landau-level orbital number $N_\phi$.
-On a torus the $1/3$ Laughlin relation is $N_\phi=3N$; there is no spherical
-shift.  Consequently, the maximally dense root compatible with the filling
-is precisely `100100...`, and its rule is $(1,3)$.
+Hybrid-Wannier orbitals provide a one-dimensional guiding-center ordering in
+a $C=1$ band.  When transverse momentum winds around the Brillouin zone, the
+Wannier center shifts by one unit cell; that Chern pump is the lattice
+counterpart of Landau-gauge orbital flow.  Continuum FQH momentum sectors
+then fold into the finite lattice Brillouin zone.
 
-This correspondence does not require a uniform magnetic field.  Hybrid
-Wannier states of a $C=1$ band provide a one-dimensional ordering analogous
-to Landau-gauge guiding centers.  As transverse momentum winds once through
-the Brillouin zone, the Wannier center shifts by one cell—the Chern pump.
-That spectral winding is what lets the continuum root pattern and quasihole
-counting survive on a lattice.  Lattice momenta are obtained by folding the
-one-dimensional orbital labels back into the $L_1\times L_2$ Brillouin zone.
+For an ideal band-projected parent Hamiltonian, $(1,3)$ is an exact zero-mode
+rule.  For the unprojected, generic checkerboard Hamiltonian used here, it is
+not an exact constraint on microscopic site occupations.  Instead, a low PES
+band can remain adiabatically connected to the Laughlin quasihole space while
+generic levels appear above it.  The entanglement gap separates these two
+sets when the finite system is favorable.
 
-For a generic FCI the $(1,3)$ rule is therefore a **phase diagnostic**, not a
-microscopic hard constraint.  If the interacting state is adiabatically
-connected to Laughlin topological order, a low PES band retains the Laughlin
-quasihole counting even though higher PES levels and detailed entanglement
-energies are nonuniversal.
+### 2.6 Why a particle cut counts quasiholes
 
-### 2.5 Non-CFT reason that the PES counts quasiholes
+This connection is easiest to see in four steps: what the labels A and B
+mean, why the flux is unchanged, why conditional A states are quasihole zero
+modes, and why their span is the rank of $\rho_A$.
 
-Hold the traced-particle coordinates $Z_B$ fixed and view
-$\Psi(Z_A,Z_B)$ only as a function of the retained coordinates $Z_A$.  Any
-two retained particles still have the same cubic coincidence zero.  It is
-also an $N_A$-particle wavefunction at the **original** orbital number
-$N_\phi$, which is larger than the minimum $3N_A$.  It therefore lies in the
-$N_A$-particle quasihole zero-mode space of the Laughlin parent Hamiltonian.
+#### Step 1: A and B label particles, not spatial regions
 
-As $Z_B$ varies, these functions span the row space of the particle
-entanglement matrix.  Hence
+Write
 
 $$
-\operatorname{rank}\rho_A^{\rm PES}
- \le \dim \mathcal H_{\rm quasihole}(N_A,N_\phi).
-$$
-
-For the ideal Laughlin state the bound is generically saturated, including
-momentum-sector resolution.  For a non-model Hamiltonian in the same phase,
-extra generic levels appear, but the quasihole-like levels should remain
-separated by an entanglement gap.  This is the direct bulk, zero-mode
-understanding of PES counting; it invokes neither an edge nor a CFT.
-
-### 2.6 Derivation of the cyclic $(1,m)$ counting
-
-Consider $N_A$ occupied orbitals on a labeled ring of $L=N_\phi$ orbitals.
-Let $g_i$ be the number of zeros following occupied particle $i$ before the
-next occupied particle.  The $(1,m)$ rule says
-
-$$
-g_i\ge m-1,
+Z_A=(z_1,\ldots,z_{N_A}),
 \qquad
-\sum_{i=1}^{N_A}g_i=L-N_A.
+Z_B=(w_1,\ldots,w_{N_B}),
+\qquad
+N_A+N_B=N.
 $$
 
-Set $y_i=g_i-(m-1)\ge0$.  Then
+The particles are indistinguishable; choosing the first $N_A$ coordinate
+labels is only bookkeeping.  No particle is confined to a region A.  In the
+reduced-density-matrix kernel,
 
 $$
-\sum_i y_i=L-mN_A.
+\rho_A(Z_A,Z_A')
+=\binom{N}{N_A}\int dZ_B\,
+ \Psi(Z_A,Z_B)\Psi^*(Z_A',Z_B),
 $$
 
-The number of ordered nonnegative solutions, after choosing a distinguished
-occupied particle, is the stars-and-bars result
+the $Z_B$ variables are integrated over, while $Z_A$ and $Z_A'$ remain as
+the arguments of the operator.  “Retained coordinates” means precisely
+these unintegrated $N_A$ particle variables.
+
+#### Step 2: tracing particles does not change the one-particle flux
+
+Before the trace, every coordinate belongs to the same one-particle
+Landau-level Hilbert space
 
 $$
-\binom{L-(m-1)N_A-1}{N_A-1}.
+\mathcal h_{N_\phi},
+\qquad
+\dim\mathcal h_{N_\phi}=N_\phi
 $$
 
-There are $L$ choices for the orbital of that distinguished particle, but
-each physical occupation string was distinguished in $N_A$ possible ways.
+on a torus.  The full state lies in
+
+$$
+\bigwedge^N\mathcal h_{N_\phi}.
+$$
+
+Tracing out coordinate labels removes particles from the density matrix; it
+does not change the external magnetic field, the boundary conditions, or the
+number of one-particle orbitals available to the remaining labels.  The
+particle-A Hilbert space is therefore
+
+$$
+\bigwedge^{N_A}\mathcal h_{N_\phi},
+$$
+
+not $\bigwedge^{N_A}\mathcal h_{3N_A}$.
+
+For an original torus Laughlin ground state $N_\phi=3N$.  Relative to the
+densest $N_A$-particle Laughlin state, which would need only $3N_A$ torus
+orbitals, the retained particles see
+
+$$
+N_\phi-3N_A=3(N-N_A)=3N_B
+$$
+
+excess flux quanta.  An $N_A$-particle state at this excess flux belongs to a
+many-quasihole sector.
+
+#### Step 3: fixing $Z_B$ produces a quasihole zero mode of the A particles
+
+For every fixed value $W=Z_B$, define the conditional A-particle function
+
+$$
+\Phi_W(Z_A)=\Psi(Z_A,W).
+$$
+
+This is not a normalized post-measurement state; it is simply a vector in the
+A-particle Hilbert space whose coefficients depend on $W$.
+
+The factorization is explicit for the planar Laughlin polynomial:
+
+$$
+\Psi_N(Z_A,W)
+=\underbrace{\prod_{i<j\in A}(z_i-z_j)^3}_{\text{A--A clustering}}
+ \underbrace{\prod_{p<q\in B}(w_p-w_q)^3}_{\text{constant for fixed }W}
+ \underbrace{\prod_{i\in A,p\in B}(z_i-w_p)^3}_{\text{extra zeros seen by A}}.
+$$
+
+For fixed $W$, the second factor is an irrelevant scalar.  The first factor
+guarantees a cubic zero whenever two retained particles meet.  The last
+factor is symmetric in the A coordinates and inserts three zeros at every
+$w_p$ for each retained particle.  Since one fundamental Laughlin quasihole
+at position $\eta$ contributes $\prod_i(z_i-\eta)$, each fixed B coordinate
+acts here like three coincident fundamental quasiholes.  There are therefore
+$3N_B$ excess quasihole fluxes, exactly as found from flux counting above.
+
+On a torus, ordinary differences are replaced by the appropriate theta
+functions and a center-of-mass factor.  The conclusion is unchanged:
+$\Phi_W$ has the original $N_\phi$ quasiperiodic boundary conditions and the
+same cubic A--A coincidence zeros.  Hence
+
+$$
+\Phi_W\in\mathcal H_{\rm qh}(N_A,N_\phi),
+$$
+
+the $N_A$-particle zero-mode space of the $V_1$ parent Hamiltonian at the
+original flux.
+
+Notice what has and has not been shown.  We did not say that $\Phi_W$ is one
+admissible occupation string.  It is generally a superposition of squeezed
+configurations.  We showed that it belongs to the zero-mode vector space
+whose independent basis states are labeled by admissible roots.
+
+#### Step 4: the support of $\rho_A$ is the span of the conditional states
+
+Using the conditional vectors, the reduced density matrix is a continuous
+Gram operator,
+
+$$
+\rho_A
+\propto\int dW\,|\Phi_W\rangle\langle\Phi_W|.
+$$
+
 Therefore
 
 $$
+\operatorname{supp}\rho_A
+=\operatorname{span}\{\Phi_W:W\text{ varies}\}.
+$$
+
+The finite-basis version makes the rank statement elementary.  Expand
+
+$$
+|\Psi\rangle
+=\sum_{a=1}^{D_A}\sum_{b=1}^{D_B}
+ M_{ab}|a\rangle_A|b\rangle_B.
+$$
+
+For a fixed B-basis state $b$, the $b$th column
+
+$$
+|\Phi_b\rangle_A=\sum_aM_{ab}|a\rangle_A
+$$
+
+is the discrete version of a conditional A state.  Tracing B gives
+
+$$
+\rho_A=MM^\dagger.
+$$
+
+For any vector $v$,
+
+$$
+v^\dagger\rho_Av=\|M^\dagger v\|^2.
+$$
+
+Thus $\ker\rho_A=\ker M^\dagger$ and
+
+$$
 \boxed{
-\mathcal N_{(1,m)}(L,N_A)
- =\frac{L}{N_A}
-  \binom{L-(m-1)N_A-1}{N_A-1}}
+\operatorname{rank}\rho_A
+=\operatorname{rank}M
+=\dim\operatorname{span}\{|\Phi_b\rangle_A\}.}
 $$
 
-for $L\ge mN_A$ and $N_A>0$.
-
-Here $m=3$ and the calculation uses $N_A=2$, so the formula reduces to
+Since every column of the ideal Laughlin particle-entanglement matrix lies
+in the quasihole space,
 
 $$
-\boxed{\mathcal N_{(1,3)}(L,2)=\frac{L(L-5)}2.}
+\boxed{
+\operatorname{rank}\rho_A^{\rm ideal}
+\le
+D_{\rm qh}(N_A,N_\phi)
+=\dim\mathcal H_{\rm qh}(N_A,N_\phi).}
 $$
 
-There is also a simple pair-counting check.  For a particle at orbital $a$,
-the second particle cannot be at $a$, $a\pm1$, or $a\pm2$, leaving $L-5$
-choices.  Multiplying by $L$ and dividing by two for the unordered pair gives
-the same result.
+Sector by sector, the same argument gives
 
-For the clusters relevant here,
+$$
+\operatorname{rank}\rho_A^{\rm ideal}(K)
+\le D_{\rm qh}(K).
+$$
 
-| geometry | $L=N_{\rm cell}$ | expected PES levels for $N_A=2$ |
-|:--|--:|--:|
-| `3x4` | 12 | $12(12-5)/2=42$ |
-| `3x5` | 15 | $15(15-5)/2=75$ |
-| `3x6` | 18 | $18(18-5)/2=117$ |
+Equality requires an additional spanning statement: as the B configuration
+varies, the conditional states must span the entire allowed quasihole space.
+This is not a consequence of the trace definition alone.  It is found for
+the standard Laughlin PES in the usual $N_A\le N/2$ regime, barring accidental
+linear dependencies, but proving finite-size saturation in complete
+generality is subtler than proving the support bound.
 
-### 2.7 Derivation of the momentum-resolved counting
+For the equal mixture of $d$ torus ground states, concatenate their particle
+entanglement matrices,
 
-Number the effective Chern-band orbitals by
+$$
+\mathcal M=\frac1{\sqrt d}
+ [M^{(1)}\;M^{(2)}\;\cdots\;M^{(d)}].
+$$
+
+Then
+
+$$
+\rho_A=\mathcal M\mathcal M^\dagger,
+$$
+
+so the support is the span of conditional states from the whole ground
+manifold.  This explains why using the full torus projector is important.
+
+#### Ideal model state versus the generic lattice FCI
+
+For the exact parent-Hamiltonian Laughlin state, clustering gives an exact
+support restriction.  When saturation holds, the number of nonzero PES
+eigenvalues equals the quasihole dimension.
+
+For a generic, unprojected lattice FCI, exact cubic clustering is absent in
+the microscopic site basis.  Its reduced density matrix can have full rank.
+The Laughlin descendant space is then identified not with the entire support
+but with a low-entanglement-energy band separated from generic levels.  In
+the current `3x6`, $N_A=2$ data,
+
+$$
+\operatorname{rank}\rho_A=\binom{36}{2}=630,
+$$
+
+while the quasihole prediction is 117.  The diagnostic is that exactly 117
+levels, with the correct momenta, occur below the entanglement gap—not that
+the full lattice density matrix has rank 117.
+
+### 2.7 Total $(1,3)$ count on a torus
+
+This section counts admissible **root occupation strings**.  The variables
+$g_i$ and $y_i$ are not new physical conditions.  They are a convenient way
+to rewrite the same spacing rule on a periodic ring.
+
+To keep the notation light, write
+
+$$
+n=N_A,
+\qquad
+L=N_\phi.
+$$
+
+Thus we place $n$ particles in $L$ labeled orbitals numbered
+$0,1,\ldots,L-1$, with orbital labels understood modulo $L$.
+
+#### From $\mu_i-\mu_{i+1}\ge3$ to the cyclic torus rule
+
+First consider an open line of orbitals.  Let the occupied positions in
+increasing order be
+
+$$
+0\le x_1<x_2<\cdots<x_n\le L-1.
+$$
+
+The $(1,3)$ rule requires consecutive particles to be at least three orbital
+labels apart:
+
+$$
+x_{i+1}-x_i\ge3.
+$$
+
+For example, particles at orbitals 2 and 5 are allowed,
+
+```text
+orbital:   2 3 4 5
+           1 0 0 1
+```
+
+whereas particles at 2 and 4 are forbidden because only one empty orbital
+lies between them.
+
+The Jack-partition convention lists occupied powers in decreasing order,
+
+$$
+\mu=(\mu_1,\ldots,\mu_n)=(x_n,x_{n-1},\ldots,x_1).
+$$
+
+Therefore
+
+$$
+\mu_i-\mu_{i+1}\ge3
+$$
+
+is exactly the same condition as $x_{i+1}-x_i\ge3$ for neighboring particles
+that do not cross the end of the orbital list.
+
+On a torus, that is not yet enough.  Orbital $L-1$ is adjacent to orbital 0,
+so the last particle must also be separated from the first across the
+periodic boundary:
+
+$$
+x_1+L-x_n\ge3.
+$$
+
+In descending partition notation, this additional condition is
+
+$$
+L-\mu_1+\mu_n\ge3.
+$$
+
+Thus the complete torus rule is
+
+$$
+\boxed{
+x_{i+1}-x_i\ge3\quad(i=1,\ldots,n-1),
+\qquad
+x_1+L-x_n\ge3.}
+$$
+
+Equivalently, every cyclic block of three orbitals contains at most one
+particle.  The variables $g_i$ simply build the wraparound condition in from
+the beginning.
+
+#### Definition of $g_i$: actual empty orbitals between particles
+
+Walk clockwise around the ring from one particle to the next.  Define
+
+$$
+g_i=\text{number of empty orbitals strictly between particle $i$ and
+particle $i+1$}.
+$$
+
+For the increasing positions above,
+
+$$
+g_i=x_{i+1}-x_i-1,
+\qquad i=1,\ldots,n-1,
+$$
+
+and the wraparound gap is
+
+$$
+g_n=x_1+L-x_n-1.
+$$
+
+The local picture is
+
+```text
+particle i                       particle i+1
+    1   0   0   [extra zeros]         1
+        <-------- g_i -------->
+```
+
+A separation of three orbital labels means two empty orbitals in between, so
+
+$$
+x_{i+1}-x_i\ge3
+\quad\Longleftrightarrow\quad
+g_i\ge2.
+$$
+
+This includes $g_n$, and is therefore the full cyclic $(1,3)$ rule.
+
+The $n$ occupied orbitals and the $n$ gaps partition the entire ring.  There
+are $n$ occupied orbitals and $L-n$ empty ones, hence
+
+$$
+\boxed{\sum_{i=1}^{n}g_i=L-n.}
+$$
+
+#### Definition of $y_i$: remove the two mandatory zeros
+
+Every gap must contain at least two zeros.  Separate those mandatory zeros
+from any additional zeros by writing
+
+$$
+g_i=2+y_i,
+\qquad
+y_i\ge0.
+$$
+
+Thus $y_i$ is simply the number of **extra** empty orbitals in gap $i$ beyond
+the two required by $(1,3)$:
+
+```text
+1  0 0  [y_i additional zeros]  1.
+```
+
+Substitute $g_i=2+y_i$ into the sum of all gaps:
+
+$$
+\sum_i(2+y_i)=L-n.
+$$
+
+Since there are $n$ gaps,
+
+$$
+2n+\sum_i y_i=L-n,
+$$
+
+and therefore
+
+$$
+\boxed{\sum_{i=1}^{n}y_i=L-3n.}
+$$
+
+The quantity
+
+$$
+Q=L-3n
+$$
+
+is the number of orbitals left over after assigning each particle one
+occupied orbital plus its two mandatory following zeros.  At exact Laughlin
+filling $L=3n$, $Q=0$.  With quasihole flux, $L>3n$, and the $Q$ extra zeros
+can be distributed among the $n$ cyclic gaps.
+
+#### What the binomial coefficient counts
+
+We must count the ordered nonnegative integer solutions of
+
+$$
+y_1+y_2+\cdots+y_n=Q.
+$$
+
+This is the stars-and-bars problem.  Represent the $Q$ extra zeros by $Q$
+identical stars and use $n-1$ bars to divide them among the $n$ gaps.  For
+example,
+
+```text
+*** | * | **
+```
+
+represents $(y_1,y_2,y_3)=(3,1,2)$.  There are $Q+n-1$ symbols in total, and
+choosing the positions of the $n-1$ bars gives
+
+$$
+\#\{(y_1,\ldots,y_n)\}
+=\binom{Q+n-1}{n-1}.
+$$
+
+Using $Q=L-3n$,
+
+$$
+\boxed{
+\#\{\text{ordered gap patterns after marking a starting particle}\}
+=\binom{L-2n-1}{n-1}.}
+$$
+
+This binomial does **not yet** count unmarked occupation strings.  It counts
+the ordered distributions of the extra zeros after one particle has been
+distinguished as the starting particle.
+
+#### Why multiply by $L$ and divide by $n$
+
+Choose the orbital $s$ of the distinguished starting particle.  There are
+$L$ choices.  Given $s$ and an ordered tuple $(y_1,\ldots,y_n)$, walk around
+the ring, putting two mandatory zeros plus $y_i$ extra zeros after particle
+$i$.  This uniquely constructs a cyclic occupation string with one marked
+particle.
+
+Hence the number of marked admissible strings is
+
+$$
+L\binom{L-2n-1}{n-1}.
+$$
+
+Every physical string contains $n$ particles, and any one of them could have
+been marked as the starting particle.  Each unmarked string has therefore
+been counted exactly $n$ times.  Dividing by $n$ gives
+
+$$
+\boxed{
+\mathcal N_{(1,3)}^{\rm torus}(L,n)
+=\frac{L}{n}
+ \binom{L-2n-1}{n-1}.}
+$$
+
+Restoring $n=N_A$,
+
+$$
+\boxed{
+\mathcal N_{(1,3)}^{\rm torus}(L,N_A)
+=\frac{L}{N_A}
+ \binom{L-2N_A-1}{N_A-1}.}
+$$
+
+This holds for $N_A>0$ and $L\ge3N_A$.  Define the $N_A=0$ count to be one.
+
+#### Check 1: exact filling gives three translated roots
+
+If $L=3n$, then $Q=0$ and the only gap tuple is
+
+$$
+(y_1,\ldots,y_n)=(0,\ldots,0).
+$$
+
+Every gap contains exactly two zeros.  The formula gives
+
+$$
+\mathcal N_{(1,3)}^{\rm torus}(3n,n)
+=\frac{3n}{n}\binom{n-1}{n-1}=3.
+$$
+
+These are exactly the three translations
+
+```text
+100100100...
+010010010...
+001001001...
+```
+
+on the ring.
+
+#### Check 2: `3x4`, $L=12$, $N_A=2$
+
+Here
+
+$$
+Q=L-3N_A=12-6=6,
+\qquad
+y_1+y_2=6.
+$$
+
+The seven ordered solutions are
+
+$$
+(0,6),(1,5),(2,4),(3,3),(4,2),(5,1),(6,0),
+$$
+
+which agrees with
+
+$$
+\binom{6+2-1}{2-1}=\binom71=7.
+$$
+
+If the marked particle is at orbital 0, these solutions place the second
+particle at orbitals $3,4,5,6,7,8,9$, respectively.  Orbitals 1, 2, 10, and
+11 are forbidden because they lie within two steps of orbital 0 around the
+ring.
+
+There are 12 choices for the marked particle's orbital and two possible
+marked particles in every unmarked pair, so
+
+$$
+\mathcal N_{(1,3)}^{\rm torus}(12,2)
+=\frac{12\times7}{2}=42.
+$$
+
+#### Check 3: `3x6`, $L=18$
+
+For $N_A=2$,
+
+$$
+Q=18-6=12,
+\qquad
+y_1+y_2=12.
+$$
+
+There are $\binom{13}{1}=13$ marked gap patterns, and therefore
+
+$$
+\mathcal N_{(1,3)}^{\rm torus}(18,2)
+=\frac{18}{2}\binom{13}{1}
+=117.
+$$
+
+For $N_A=3$,
+
+$$
+Q=18-9=9,
+\qquad
+y_1+y_2+y_3=9.
+$$
+
+Stars and bars gives
+
+$$
+\binom{9+3-1}{3-1}=\binom{11}{2}=55
+$$
+
+marked gap patterns, and hence
+
+$$
+\mathcal N_{(1,3)}^{\rm torus}(18,3)
+=\frac{18}{3}\times55
+=330.
+$$
+
+#### What this count means for the PES
+
+For the $V_1$ Laughlin parent problem, the admissible-root construction gives
+
+$$
+D_{\rm qh}(N_A,L)
+=\dim\mathcal H_{\rm qh}(N_A,L)
+=\mathcal N_{(1,3)}^{\rm torus}(L,N_A).
+$$
+
+This is what the combinatorial formula counts: the dimension of the ideal
+quasihole zero-mode space.  Combining it with Section 2.6 gives the precise
+chain of statements
+
+$$
+\underbrace{\mathcal N_{(1,3)}}_{\text{admissible roots}}
+=\underbrace{D_{\rm qh}}_{\text{ideal zero-mode dimension}}
+\ge\underbrace{\operatorname{rank}\rho_A^{\rm ideal}}_{
+\text{conditional states that are actually spanned}}.
+$$
+
+When the ideal particle cut saturates the quasihole space, the inequality is
+an equality.  In a generic FCI, $\mathcal N_{(1,3)}$ instead predicts the
+number of levels in the low PES band; the total microscopic rank can be much
+larger.
+
+For $N_A=2$,
+
+$$
+\mathcal N_{(1,3)}^{\rm torus}(L,2)=\frac{L(L-5)}2.
+$$
+
+This also follows by fixing one particle: the other cannot occupy the same
+orbital or either of the two orbitals on each side, leaving $L-5$ choices.
+Divide the ordered count by two.
+
+For comparison, on a sphere or open orbital chain there is no cyclic
+wraparound.  The number of length-$L$ strings with $N_A$ ones separated by at
+least two zeros is
+
+$$
+\mathcal N_{(1,3)}^{\rm open}(L,N_A)
+=\binom{L-2(N_A-1)}{N_A}.
+$$
+
+On the sphere one must additionally use $L=N_\phi+1$ and the Laughlin shift
+$N_\phi=3(N-1)$.  The torus formula, not the open formula, is the one relevant
+to this repository.
+
+### 2.8 From geometry and filling to a predicted count
+
+For a torus calculation in this checkerboard model:
+
+1. Compute $L=L_1L_2$, the number of unit cells and of states in one Chern
+   band.
+2. Check the band filling $N/L$.  At the commensurate fermionic Laughlin
+   point, $L=3N$.
+3. Choose a particle cut, normally $1\le N_A\le\lfloor N/2\rfloor$.
+4. Insert $L$ and $N_A$ into the cyclic formula above.
+5. Enumerate the admissible strings to resolve the total among lattice
+   momenta.
+
+For the study geometries, the clean half-cut range gives
+
+| geometry | $L=N_{\rm cell}$ | $N$ | predicted low PES count(s) |
+|:--|--:|--:|:--|
+| `3x4` | 12 | 4 | $N_A=1:12$; $N_A=2:42$ |
+| `3x5` | 15 | 5 | $N_A=1:15$; $N_A=2:75$ |
+| `3x6` | 18 | 6 | $N_A=1:18$; $N_A=2:117$; $N_A=3:330$ |
+
+The PES implementation works in the full two-site lattice basis.  Its raw
+$N_A=2$ dimensions are therefore $\binom{24}{2}=276$,
+$\binom{30}{2}=435$, and $\binom{36}{2}=630$.  The much smaller numbers 42,
+75, and 117 predict the low quasihole-like band, not the entire microscopic
+PES.
+
+### 2.9 Momentum-resolved counting for the present convention
+
+For the geometries in this project, label the effective Chern-band orbitals
+by
 
 $$
 j=k_1+L_1k_2,
-\quad
+\qquad
 0\le k_1<L_1,
-\quad
+\qquad
 0\le k_2<L_2.
 $$
 
-Enumerate every admissible unordered pair $a<b$.  If
-$a\leftrightarrow(k_1^a,k_2^a)$ and
-$b\leftrightarrow(k_1^b,k_2^b)$, place that pair in
+For every cyclic $(1,3)$-admissible set $S$ of $N_A$ orbital labels, assign
 
 $$
-(K_1,K_2)=
-\bigl((k_1^a+k_1^b)\bmod L_1,
-      (k_2^a+k_2^b)\bmod L_2\bigr).
+K_1=\sum_{j\in S}(j\bmod L_1)\pmod{L_1},
 $$
 
-This direct enumeration yields:
+$$
+K_2=\sum_{j\in S}\left\lfloor\frac{j}{L_1}\right\rfloor
+    \pmod{L_2}.
+$$
 
-| geometry | expected count in each momentum sector |
+Increment the count in that $(K_1,K_2)$ sector.  In pseudocode,
+
+```text
+counts[K1,K2] = 0
+for each N_A-element subset S of {0,...,L-1}:
+    if every cyclic interval of length 3 contains at most one member of S:
+        K1 = sum(j mod L1 for j in S) mod L1
+        K2 = sum(floor(j/L1) for j in S) mod L2
+        counts[K1,K2] += 1
+```
+
+This enumeration reproduces the momentum folding of the current data.
+Changing the hybrid-Wannier origin can permute momentum labels without
+changing the multiset of sector counts.  For a different lattice convention,
+Chern number, or aspect-ratio folding, the momentum map must be rederived;
+the one-dimensional admissibility count alone does not determine label names.
+
+At $N_A=2$ the expected multiplicities are
+
+| geometry | low levels in each subsystem momentum sector |
 |:--|:--|
-| `3x4` | 3 levels for even $K_2$, 4 for odd $K_2$, for each $K_1$ |
-| `3x5` | 5 levels in every one of the 15 sectors |
-| `3x6` | 6 levels for even $K_2$, 7 for odd $K_2$, for each $K_1$ |
+| `3x4` | 3 for even $K_2$, 4 for odd $K_2$, for every $K_1$ |
+| `3x5` | 5 in all 15 sectors |
+| `3x6` | 6 for even $K_2$, 7 for odd $K_2$, for every $K_1$ |
 
-Changing the Wannier-orbital origin can permute sector labels, but it cannot
-change these multiplicities.  Geometry therefore affects how the universal
-total is folded among lattice momenta.  It also explains why distinct
-topological ground states can collapse into the same many-body momentum
-sector on some commensurate clusters; momentum labels alone do not determine
-the dimension of the topological manifold.
+Thus a correct `3x6`, $N_A=2$ plot has 18 momentum columns.  Below one
+approximately horizontal entanglement gap, each even-$K_2$ column contains
+six dots and each odd-$K_2$ column contains seven.  The dots need not be
+degenerate or form a perfectly flat band.  Their count and momenta, rather
+than their precise heights, are the fingerprint.
 
-### 2.8 Comparison with the downloaded PES
+### 2.10 What an $N_A$ sweep should look like
 
-| geometry | expected $(1,3)$ count | levels below largest PES gap | largest gap | verdict |
-|:--|--:|--:|--:|:--|
-| `3x4` | 42 | 42 | 2.37097 | exact total and sector-by-sector match |
-| `3x5` | 75 | 75 | 2.72160 | exact total and sector-by-sector match |
-| `3x6` | 117 | 117 | 2.30153 | exact match using the corrected three-state manifold |
+Use separate momentum-resolved panels for each particle-cut size.  For
+`3x6`, the predicted low-band sector counts are:
 
-For `3x4`, the corrected low band contains three levels in each even-$K_2$
-sector and four in each odd-$K_2$ sector.  For `3x5`, it contains five levels
-in every momentum sector.  For `3x6`, it contains six levels in each
-even-$K_2$ sector and seven in each odd-$K_2$ sector.  Thus all three
-geometries match both the total cyclic-admissible count and its folding among
-lattice momenta.  This is strong finite-size evidence for the desired
-$1/3$-Laughlin FCI order.
+#### $N_A=1$
 
-The corrected `3x6` result is particularly important because all three
-ground-manifold states occupy the same many-body momentum sector.  The PES
-uses levels 1, 2, and 3 of sector $(0,3)$, rather than taking one state from
-each of three distinct sectors.  Section 5 gives a numerical audit of this
-rerun and contrasts it with the obsolete result.
+There are 18 quasihole-like states: one in every $(K_1,K_2)$ sector.
+The full microscopic one-particle density matrix can have 36 levels, so one
+expects a target low set of 18 and, in a favorable finite system, a separated
+nonuniversal set above it.
 
-Blindly selecting the largest gap in non-FCI data gives 431 and 44 levels for
-AHC (`3x5`, `3x6`) and 3, 10, and 33 levels for CDW (`3x4`, `3x5`, `3x6`).
-These do not match the Laughlin quasihole total or momentum allocation.  A
-large numerical gap without the correct counting is not a topological PES
-diagnosis.
+#### $N_A=2$
 
-## 3. Spatial-orbital entanglement spectrum: boundary counting
+The target is the observed 117-level band:
 
-### 3.1 Which cut this code actually makes
+| $K_1$ | $K_2=0$ | 1 | 2 | 3 | 4 | 5 |
+|--:|--:|--:|--:|--:|--:|--:|
+| 0 | 6 | 7 | 6 | 7 | 6 | 7 |
+| 1 | 6 | 7 | 6 | 7 | 6 | 7 |
+| 2 | 6 | 7 | 6 | 7 | 6 | 7 |
 
-Expand the lattice state in site-occupation bases of two complementary
-regions:
+#### $N_A=3$
+
+The target grows to 330 levels:
+
+| $K_1$ | $K_2=0$ | 1 | 2 | 3 | 4 | 5 |
+|--:|--:|--:|--:|--:|--:|--:|
+| 0 | 21 | 18 | 18 | 21 | 18 | 18 |
+| 1 | 18 | 18 | 18 | 18 | 18 | 18 |
+| 2 | 18 | 18 | 18 | 18 | 18 | 18 |
+
+The microscopic $N_A=3$ lattice space has dimension
+$\binom{36}{3}=7140$, so this is a substantially denser plot.  Finite-size
+mixing is stronger and the entanglement gap may be less visually clean even
+if the phase is unchanged.
+
+Across the sweep, one should compare:
+
+- the number of levels below a candidate common gap in each panel;
+- their complete $(K_1,K_2)$ distribution;
+- the stability of that separation with system size and Hamiltonian
+  parameters.
+
+One should **not** compare absolute $\xi$ values between different $N_A$
+panels.  Each panel comes from a separately normalized density matrix.
+
+It is usually best to stop at $N_A\le N/2$.  For a single pure state, the
+nonzero singular values of complementary particle cuts are related.  For the
+equal mixture of several torus ground states that simple one-state symmetry
+is modified, and for $N_A>N/2$ the traced subsystem can impose an additional
+rank bottleneck.  The formal zero-mode count may then exceed the PES rank
+that can actually be exposed.  The standard half-cut range avoids these
+ambiguities and supplies the strongest diagnostic.
+
+### 2.11 What the current PES data show
+
+The new FCI files use the following ground-manifold states:
+
+| geometry | states $(K_1,K_2,\text{in-sector level})$ |
+|:--|:--|
+| `3x4` | $(2,2,1)$, $(1,2,1)$, $(0,2,1)$ |
+| `3x5` | $(0,0,1)$, $(1,0,1)$, $(2,0,1)$ |
+| `3x6` | $(0,3,1)$, $(0,3,2)$, $(0,3,3)$ |
+
+At $N_A=2$:
+
+| geometry | all retained PES levels | predicted low count | observed below matching gap | gap $\Delta_\xi$ | weight below gap |
+|:--|--:|--:|--:|--:|--:|
+| `3x4` | 276 | 42 | 42 | 2.370970 | 0.969507 |
+| `3x5` | 435 | 75 | 75 | 2.721598 | 0.970693 |
+| `3x6` | 630 | 117 | 117 | 2.301527 | 0.967218 |
+
+Every geometry also matches the sector-by-sector multiplicities in Section
+2.9.  This is much stronger than observing a large gap somewhere in a sorted
+list.  An unrelated state can have a numerically large gap at the wrong level
+count.  The correct procedure is to identify the theoretically predicted
+low-band dimension and momenta first, and only then check whether a stable
+gap isolates them.
+
+For `3x6`, the gap is between
+
+$$
+\xi_{117}=5.3985263512,
+\qquad
+\xi_{118}=7.7000530006.
+$$
+
+The exact total and momentum-resolved agreement across all three geometries
+is strong finite-size evidence for fermionic $1/3$ Laughlin-type FCI order.
+It is supporting evidence to be combined with the ground-state manifold,
+spectral flow, charge pump, and charge gap—not a logical proof from one plot.
+
+---
+
+## 3. Site real-space entanglement spectrum
+
+### 3.1 Orbital ES, real-space ES, and the cut used here
+
+The original Li--Haldane construction is an **orbital entanglement spectrum**:
+one divides a set of Landau-level guiding-center orbitals.  An orbital is
+spatially localized in one direction but extended in the other, so this is
+not a sharp real-space cut.
+
+A **real-space entanglement spectrum** instead assigns localized degrees of
+freedom according to their physical position.  It retains locality along the
+cut and can also expose edge structure.
+
+The present code assigns checkerboard **site orbitals** to a contiguous strip
+of unit cells.  It is therefore most precisely called a site real-space ES,
+not an orbital ES in the original Landau-level sense.  The strip is cut along
+direction 2:
+
+| geometry | cells retained in direction 2 | sites in A | sites in B |
+|:--|--:|--:|--:|
+| `3x4` | 2 of 4 | 12 | 12 |
+| `3x5` | 2 of 5 | 12 | 18 |
+| `3x6` | 3 of 6 | 18 | 18 |
+
+Because the strip contains all cells along direction 1, translation along
+direction 1 remains a symmetry of the bipartition.  Momentum $K_1$ is
+therefore available in principle as momentum parallel to the entanglement
+boundaries.  The current implementation does not retain it in the output.
+
+The current RSES also uses one pure absolute ground state,
+
+$$
+\rho_A^{\rm RSES}
+=\operatorname{Tr}_B|\Psi_0\rangle\langle\Psi_0|,
+$$
+
+rather than the mixed ground-space projector used by the PES.  This is a
+deliberate distinction: for a boundary spectrum, one generally wants a pure
+minimally entangled state for the chosen cylinder cut.  On a finite torus,
+the raw numerical energy eigenvector is not guaranteed to be that state,
+especially when multiple ground states share one momentum sector.
+
+Concretely, one searches within the ground space,
+
+$$
+|\Psi(c)\rangle=\sum_{a=1}^{d}c_a|\Psi_a\rangle,
+\qquad \sum_a|c_a|^2=1,
+$$
+
+for combinations that minimize the entanglement entropy (or an equivalent
+Rényi entropy) for the chosen cylinder cut.  In an Abelian topological phase,
+these minimally entangled states approximately have definite anyon flux
+through the cylinder.  Their spectra organize cleanly into one topological
+sector; an arbitrary superposition can combine several sectors and obscure
+the boundary towers.
+
+### 3.2 What the binomial calculation actually proves
+
+Expand the state in occupation bases on the two sides,
 
 $$
 |\Psi\rangle
 =\sum_{N_A}\sum_{a\in\mathcal H_A(N_A)}
-                 \sum_{b\in\mathcal H_B(N-N_A)}
- M^{(N_A)}_{ab}|a\rangle_A|b\rangle_B.
+                \sum_{b\in\mathcal H_B(N-N_A)}
+M^{(N_A)}_{ab}|a\rangle_A|b\rangle_B.
 $$
 
-For each $N_A$, the singular values of $M^{(N_A)}$ give the Schmidt
-probabilities.  The code therefore computes
+If A contains $M_A$ fermionic sites and B contains $M_B$ sites, then
 
 $$
-M^{(N_A)}=U S V^\dagger,
+\dim\mathcal H_A(N_A)=\binom{M_A}{N_A},
 \qquad
-\lambda_\alpha^{(N_A)}=S_{\alpha\alpha}^2,
-\qquad
-\xi_\alpha^{(N_A)}=-\log\lambda_\alpha^{(N_A)}.
-$$
-
-The present checkerboard partition cuts a contiguous strip of lattice unit
-cells along direction 2:
-
-- `3x5`: region A has 12 sites and B has 18 sites;
-- `3x6`: A and B each have 18 sites.
-
-Because these are localized site orbitals, this is a lattice real-space cut,
-also reasonably called a spatial-orbital cut.  It is not literally the
-original Li-Haldane orbital cut through continuum Landau guiding-center
-orbitals, although both create an effective boundary and should share a
-universal low branch when the cut and state are suitable.
-
-The current code uses the lowest single eigenstate, not the equal-weight
-three-state density matrix.  On a torus, different linear combinations of
-the ground multiplet can have different spatial entanglement.  The cleanest
-edge spectrum is generally obtained from a minimally entangled state for the
-chosen cut.  This is another reason to avoid over-interpreting raw ranks from
-the current output.
-
-### 3.2 First derive the nonuniversal rank ceiling
-
-#### General formula
-
-If A contains $M_A$ fermionic sites and B contains $M_B$ sites, the number of
-$N_A$-particle occupation states in A is
-
-$$
-\dim\mathcal H_A(N_A)=\binom{M_A}{N_A}.
-$$
-
-Since B contains $N_B=N-N_A$ particles,
-
-$$
 \dim\mathcal H_B(N-N_A)=\binom{M_B}{N-N_A}.
 $$
 
-The Schmidt coefficient matrix in this particle-number block is a rectangular
-linear map
-
-$$
-M^{(N_A)}:
-\mathcal H_B(N-N_A)\longrightarrow\mathcal H_A(N_A).
-$$
-
-A matrix cannot have rank larger than its number of rows or its number of
-columns.  Therefore
+The Schmidt matrix $M^{(N_A)}$ is rectangular, so
 
 $$
 \boxed{
+\operatorname{rank}M^{(N_A)}
+\le
 R_{\max}(N_A)
 =\min\left\{
 \binom{M_A}{N_A},
@@ -419,580 +1512,204 @@ R_{\max}(N_A)
 \right\}.}
 $$
 
-This is ordinary Hilbert-space counting.  It makes no use of Laughlin
-clustering, a Chern number, edge physics, or a CFT.
+This is the entire content of the binomial derivation.  It uses neither a
+Chern number nor fractionalization nor an edge theory.  A generic fermionic
+state can saturate it.
 
-The underlying generating function is also elementary.  A fermionic site is
-either empty or occupied, contributing $1+x$.  For $M$ sites,
+The current ranks are:
 
-$$
-(1+x)^M
-=\sum_{n=0}^{M}\binom{M}{n}x^n.
-$$
+| geometry | observed ranks from $N_A=0$ through $N$ | kinematic ceilings |
+|:--|:--|:--|
+| `3x4` | `1,12,66,12,1` | `1,12,66,12,1` |
+| `3x5` | `1,12,66,153,18,1` | `1,12,66,153,18,1` |
+| `3x6` | `1,18,153,676,153,18,1` | `1,18,153,816,153,18,1` |
 
-Thus $\binom{M}{n}$ is the coefficient of $x^n$ and counts $n$-particle Fock
-states.  Equivalently,
+The `3x4` and `3x5` blocks saturate the generic ceiling.  In `3x6`, only the
+central $N_A=3$ block falls below it.  The implementation discards
+probabilities at or below $10^{-14}$, and the smallest retained central value
+is already about $1.04\times10^{-14}$.  The reported 676 is therefore
+cutoff-sensitive.  It has no established universal Laughlin meaning.
 
-$$
-R_{\max}(N_A)
-=\min\left\{
-[x^{N_A}](1+x)^{M_A},
-[x^{N-N_A}](1+x)^{M_B}
-\right\},
-$$
+These ranks and the reflection symmetry of the equal `3x4` and `3x6` cuts
+are useful numerical checks.  They do **not** diagnose an FCI edge.
 
-where $[x^n]f(x)$ means the coefficient of $x^n$ in $f(x)$.
+### 3.3 Where the single-edge sequence comes from
 
-#### Explicit derivation for `3x5`
-
-The cluster contains $3\times5\times2=30$ checkerboard sites and
-
-$$
-N=\frac{3\times5}{3}=5
-$$
-
-fermions.  The spatial strip used by the code has $M_A=12$ sites in A and
-$M_B=18$ sites in B.  For every possible $N_A$:
-
-| $N_A$ | $\dim\mathcal H_A=\binom{12}{N_A}$ | $\dim\mathcal H_B=\binom{18}{5-N_A}$ | $R_{\max}(N_A)$ |
-|--:|--:|--:|--:|
-| 0 | 1 | 8568 | 1 |
-| 1 | 12 | 3060 | 12 |
-| 2 | 66 | 816 | 66 |
-| 3 | 220 | 153 | 153 |
-| 4 | 495 | 18 | 18 |
-| 5 | 792 | 1 | 1 |
-
-Taking the smaller entry in each row gives
+Suppose first that there is one isolated boundary of fermionic
+$\nu=1/3$ topological order.  The long-wavelength bulk response is described
+by the Abelian $K$ matrix
 
 $$
-\boxed{1,12,66,153,18,1.}
+K=(3),
+\qquad t=(1).
 $$
 
-The downloaded `3x5` FCI spatial spectrum has exactly these ranks.  This
-means every $N_A$ block saturates its generic rectangular-matrix rank bound.
-It is a useful implementation and normalization check, but it is not a
-topological edge-counting result: a generic five-fermion state on the same
-12+18 partition can give the same sequence.
-
-#### Explicit derivation for `3x6`
-
-Here there are $3\times6\times2=36$ sites and
+Gauge invariance of the Chern--Simons bulk in the presence of a boundary
+requires a chiral boundary degree of freedom.  Quantizing its charge-density
+waves gives one bosonic oscillator $a_{-n}$ for every positive boundary
+momentum $n$.  At fixed edge charge and fixed topological sector, a state is
 
 $$
-N=\frac{3\times6}{3}=6
+\prod_{n\ge1}(a_{-n})^{r_n}|Q,a\rangle,
+\qquad r_n=0,1,2,\ldots,
 $$
 
-fermions.  The cut is symmetric, with $M_A=M_B=18$.  Therefore
+with excess momentum
 
 $$
-R_{\max}(N_A)
-=\min\left\{
-\binom{18}{N_A},
-\binom{18}{6-N_A}
-\right\}.
+\Delta K=\sum_{n\ge1}nr_n.
 $$
 
-Evaluating it explicitly:
-
-| $N_A$ | $\dim\mathcal H_A=\binom{18}{N_A}$ | $\dim\mathcal H_B=\binom{18}{6-N_A}$ | $R_{\max}(N_A)$ |
-|--:|--:|--:|--:|
-| 0 | 1 | 18564 | 1 |
-| 1 | 18 | 8568 | 18 |
-| 2 | 153 | 3060 | 153 |
-| 3 | 816 | 816 | 816 |
-| 4 | 3060 | 153 | 153 |
-| 5 | 8568 | 18 | 18 |
-| 6 | 18564 | 1 | 1 |
-
-The maximal-rank sequence is therefore
-
-$$
-\boxed{1,18,153,816,153,18,1.}
-$$
-
-The reflection under $N_A\leftrightarrow6-N_A$ follows simply from the equal
-18+18 bipartition.  The downloaded data instead contain
-
-$$
-1,18,153,676,153,18,1.
-$$
-
-Only the central block does not saturate the kinematic ceiling:
-$676<816$.  The smallest retained central-block probability is
-$1.04484\times10^{-14}$, while the implementation discards probabilities at
-or below $10^{-14}$.  The reported rank 676 is therefore visibly sensitive
-to the numerical cutoff.  It may also reflect exact wavefunction structure
-or symmetry-imposed relations, but a cutoff-stability calculation would be
-needed to separate those possibilities.  The number 676 by itself has no
-established universal Laughlin interpretation.
-
-The corrected file passes two useful checks.  First, all retained Schmidt
-probabilities sum to
-
-$$
-\operatorname{Tr}\rho_A=1.000000000000047.
-$$
-
-Second, because the cut divides the cluster into equal 18-site halves, the
-spectra in the $N_A$ and $6-N_A$ blocks must agree for a pure state.  The
-maximum probability differences for the paired blocks $(0,6)$, $(1,5)$,
-and $(2,4)$ are respectively $0$, $2.17\times10^{-19}$, and
-$1.94\times10^{-16}$.  This is a stringent numerical validation of the
-spatial Schmidt decomposition, but it is still not an edge-CFT counting
-test.
-
-### 3.3 Where the edge-CFT counting comes from
-
-Here a CFT means a gapless $(1+1)$-dimensional quantum field theory at a
-scale-invariant fixed point.  Its states are organized into **primary**
-sectors and oscillator **descendants** above each primary.  For a Laughlin
-edge, the primary sector records the anyon/edge-charge sector, while the
-descendants are propagating edge-density waves.  The integer-partition
-counting comes from those descendants.
-
-The continuum Laughlin polynomial has an exact CFT representation.  Take a
-canonically normalized chiral boson $\phi$ with
-
-$$
-\langle\phi(z)\phi(w)\rangle=-\log(z-w)
-$$
-
-and electron vertex operator
-
-$$
-V_e(z)=e^{i\sqrt m\,\phi(z)}.
-$$
-
-After inserting a neutralizing background charge,
-
-$$
-\left\langle\prod_i V_e(z_i)\,\mathcal O_{\rm bg}\right\rangle
-\propto\prod_{i<j}(z_i-z_j)^m.
-$$
-
-This is a wavefunction construction from a conformal block.  The same chiral
-boson describes the long-wavelength Laughlin edge.  In $K$-matrix language,
-it is conventional to rescale the field as
-$\varphi=\phi/\sqrt m$.  Then $V_e=e^{im\varphi}$, $K=(m)$, and, for $m=3$,
-the edge action is
-
-$$
-S_{\rm edge}
-=\frac{3}{4\pi}\int dt\,dx\,
- \left(\partial_t\varphi\,\partial_x\varphi
-       -v(\partial_x\varphi)^2\right).
-$$
-
-The electron is the local $e^{i3\varphi}$ excitation in this normalization,
-while $e^{i\varphi}$ creates the charge-$e/3$ anyon.  The three values of
-anyon charge modulo an electron give the three primary/topological sectors
-of $U(1)_3$.
-
-At fixed charge and fixed topological sector, edge excitations are bosonic
-oscillator descendants
-
-$$
-\prod_{n=1}^{\infty}(a_{-n})^{r_n}|Q\rangle,
-\qquad
-r_n=0,1,2,\ldots,
-$$
-
-with excess edge momentum
-
-$$
-\Delta K=\sum_{n\ge1}n r_n.
-$$
-
-Physically, $a_{-n}$ creates a Fourier component of the edge-density or edge-
-shape deformation with wavelength momentum $n$.  Since this excitation is
-bosonic, the same mode can be occupied zero, one, two, or arbitrarily many
-times.  At small $\Delta K$, the states are especially transparent:
-
-| $\Delta K$ | integer partitions | edge states | count |
-|--:|:--|:--|--:|
-| 0 | $0$ | $|Q\rangle$ | 1 |
-| 1 | $1$ | $a_{-1}|Q\rangle$ | 1 |
-| 2 | $2$, $1+1$ | $a_{-2}|Q\rangle$, $(a_{-1})^2|Q\rangle$ | 2 |
-| 3 | $3$, $2+1$, $1+1+1$ | $a_{-3}|Q\rangle$, $a_{-2}a_{-1}|Q\rangle$, $(a_{-1})^3|Q\rangle$ | 3 |
-| 4 | $4$, $3+1$, $2+2$, $2+1+1$, $1+1+1+1$ | five corresponding oscillator products | 5 |
-
-Thus counting descendants at fixed $\Delta K$ is exactly the integer-
-partition problem.
-
-#### Obtaining the sequence from the generating function
-
-For one momentum-$n$ oscillator, the allowed occupations contribute
-
-$$
-1+q^n+q^{2n}+q^{3n}+\cdots=\frac{1}{1-q^n}.
-$$
-
-The exponent records the momentum carried by that mode.  All positive-$n$
-modes are independent, so their generating functions multiply:
-
-$$
-Z_{\rm edge}(q)
-=\prod_{n=1}^{\infty}\left(1+q^n+q^{2n}+\cdots\right)
-=\prod_{n=1}^{\infty}\frac1{1-q^n}
-=1+q+2q^2+3q^3+5q^4+7q^5+11q^6+\cdots.
-$$
-
-For example, the coefficient of $q^3$ has three contributions:
-
-$$
-q^3,\qquad q^2q,\qquad q q q,
-$$
-
-coming respectively from one $n=3$ boson, one $n=2$ plus one $n=1$ boson,
-or three $n=1$ bosons.  These are the three partitions of 3.  In general,
-
-$$
-Z_{\rm edge}(q)
-=\sum_{\Delta K=0}^{\infty}p(\Delta K)q^{\Delta K},
-$$
-
-where $p(\Delta K)$ is the integer-partition number.  Hence the familiar
-single-edge sequence
-
-$$
-1,1,2,3,5,7,11,\ldots
-$$
-
-is $p(\Delta K)$, the number of integer partitions of the momentum.  It is
-not a sequence of total Schmidt ranks in successive $N_A$ blocks.
-
-The same result appears in the $U(1)$ chiral-boson CFT character.  Within a
-fixed charge sector $Q$,
-
-$$
-\chi_Q(q)
-=q^{h_Q-c/24}\prod_{n=1}^{\infty}\frac1{1-q^n}
-=\frac{q^{h_Q}}{\eta(q)},
-$$
-
-where $h_Q$ shifts the momentum of the primary state, $c=1$, and
-
-$$
-\eta(q)=q^{1/24}\prod_{n=1}^{\infty}(1-q^n)
-$$
-
-is the Dedekind eta function.  The prefactor changes the starting momentum
-of the tower but not the descendant multiplicities.  This is why every
-single-component Laughlin edge has the oscillator sequence
-$1,1,2,3,5,7,11,\ldots$: changing $m$ changes the charge sectors and primary
-scaling dimensions, but not the counting of one chiral boson's descendants.
-
-#### Direct Laughlin-wavefunction derivation without CFT
-
-The edge modes can also be constructed directly.  Define the symmetric
-power-sum polynomial
-
-$$
-p_n(z_1,\ldots,z_N)=\sum_{i=1}^{N}z_i^n.
-$$
-
-Multiplying the Laughlin state by $p_n$ deforms its edge and adds angular
-momentum $n$ without changing the bulk clustering zeros.  A general edge
-wavefunction is therefore schematically
-
-$$
-\Psi_{\{r_n\}}
-=\left[\prod_{n\ge1}p_n^{r_n}\right]\Psi_{\rm Laughlin},
-\qquad
-\Delta L=\sum_{n\ge1}n r_n.
-$$
-
-Counting independent products of the $p_n$ at fixed $\Delta L$ gives the
-same integer partitions.  The CFT oscillator $a_{-n}$ is the field-theory
-language for this microscopic edge-density deformation; the partition
-counting itself does not require starting from CFT.
-
-At finite particle number, sufficiently large $\Delta L$ eventually produces
-linear relations or truncations among symmetric polynomials, and a small
-entanglement region can couple the two virtual edges.  Consequently, the
-partition sequence is expected most cleanly at low $\Delta K$ before these
-finite-size effects enter—not as an unrestricted count of every level in the
-finite Hilbert space.
-
-#### Where the sequence should appear in an entanglement plot
-
-The sequence is obtained **within one fixed $N_A$ and one fixed topological
-or edge-charge sector**, while varying momentum parallel to the cut.  One
-must:
-
-1. choose a fixed $N_A$ block;
-2. block-diagonalize $\rho_A$ by the conserved momentum $K_\parallel$ along
-   the boundary;
-3. identify the edge-vacuum momentum $K_0$;
-4. define $\Delta K=K_\parallel-K_0$ with the appropriate cyclic convention;
-5. count only the low-lying entanglement branch below a stable gap at each
-   $\Delta K$.
-
-For a single isolated edge, that table should begin
-
-| $\Delta K$ | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
-|--:|--:|--:|--:|--:|--:|--:|--:|
-| low edge levels | 1 | 1 | 2 | 3 | 5 | 7 | 11 |
-
-It is therefore conceptually wrong to read the edge sequence by moving from
-the $N_A=0$ block to $N_A=1$, then $N_A=2$, and so forth.  Those total block
-ranks are governed first by the binomial ceilings derived in Section 3.2.
-
-Why should a spatial entanglement spectrum see this?  A local cut through a
-gapped state creates virtual boundary degrees of freedom, and
-$H_E=-\log\rho_A$ is expected to be quasi-local near that boundary.  Its
-long-wavelength low-energy sector can then flow to the same anomalous chiral
-edge theory required by the bulk Hall topological order.  This is the
-entanglement version of bulk-edge correspondence.  Microscopic velocities,
-level spacings, and high entanglement levels are not universal; the symmetry
-counting of a separated low branch is the useful part.
-
-### 3.4 The two-boundary warning for this torus cut
-
-A strip cut on a torus has **two** entanglement boundaries.  If two identical
-edge oscillator towers were independent and graded by the sum of their
-excitation numbers, their generating function would be
-
-$$
-Z_{\rm two\ edge}(q)=Z_{\rm edge}(q)^2
-=1+2q+5q^2+10q^3+20q^4+\cdots.
-$$
-
-In an actual momentum-resolved spectrum, the two oppositely oriented
-boundaries contribute momenta with opposite signs; charge/topological-sector
-constraints and finite-width coupling further reorganize the branches.
-Therefore even this convolution should not be applied blindly.  One must
-resolve momentum parallel to the cut and identify which edge sectors are
-being compared.
-
-### 3.5 Why the two generating functions count different things
-
-The contrast can be summarized directly from the factors being multiplied.
-
-For a localized fermionic site, Pauli exclusion allows occupation zero or
-one:
-
-$$
-1+x.
-$$
-
-For $M$ sites this becomes $(1+x)^M$, whose coefficients are binomial Fock-
-space dimensions.  Combining the A and B dimensions gives the raw Schmidt-
-rank ceilings such as `1,12,66,153,18,1`.
-
-For a bosonic edge-density mode of momentum $n$, occupation may be zero, one,
-two, or arbitrarily large:
+One mode of momentum $n$ contributes
 
 $$
 1+q^n+q^{2n}+\cdots=\frac1{1-q^n}.
 $$
 
-Multiplying over all $n>0$ produces integer partitions and therefore
-`1,1,2,3,5,7,11,...`.  The variable $x$ in the first problem records particle
-number, whereas $q$ in the second records excess edge momentum.
+Multiplying over independent modes gives
 
-The PES quasihole count is a third problem again: it counts cyclic binary
-root configurations subject to the $(1,3)$ admissibility constraint, as
-derived in Section 2.6.  Its 75 and 117 levels must not be inferred from
-either of the two generating functions above.
+$$
+Z_{\rm edge}(q)
+=\prod_{n=1}^{\infty}\frac1{1-q^n}
+=1+q+2q^2+3q^3+5q^4+7q^5+11q^6+\cdots.
+$$
 
-### 3.6 Non-CFT understanding of the spatial counting
+The coefficient of $q^{\Delta K}$ is the integer-partition number
+$p(\Delta K)$.  For example, at $\Delta K=3$ the possibilities are
 
-The essential reasoning can be stated without constructing the bulk
-wavefunction from a CFT:
+$$
+3,\qquad2+1,\qquad1+1+1,
+$$
 
-1. A gapped, local two-dimensional ground state has entanglement dominated by
-   degrees of freedom near the cut.
-2. A $1/3$ Laughlin topological phase has a quantized Hall response, charge
-   $e/3$ anyons, and a chiral boundary anomaly.  A purely one-dimensional
-   local boundary cannot remove that anomaly while preserving charge and the
-   bulk gap.
-3. The minimal Abelian boundary theory is the $K=3$ chiral Luttinger liquid.
-   Quantizing its density waves gives one harmonic oscillator at every
-   positive momentum, hence integer partitions.
+corresponding to
+$a_{-3}$, $a_{-2}a_{-1}$, and $(a_{-1})^3$.  Hence one isolated chiral edge
+has
 
-Calling the low-energy fixed point a $c=1$ CFT is an efficient description
-of step 3, not an assumption that the lattice FCI bulk is conformally
-invariant.  The bulk is gapped and is instead characterized at long distance
-by $U(1)_3$ topological order.  CFT enters only at a gapless edge, or as an
-exact mathematical construction of special trial wavefunctions.
+| $\Delta K$ | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+|--:|--:|--:|--:|--:|--:|--:|--:|
+| descendants | 1 | 1 | 2 | 3 | 5 | 7 | 11 |
 
-There is also an important limitation: entanglement spectra are less robust
-than quantized responses or anyon data.  The entanglement Hamiltonian can
-change with the partition and microscopic deformation even while the bulk
-phase stays fixed.  Edge-like counting below a stable entanglement gap is
-strong supporting evidence, not a standalone definition of the phase.
+Calling this a $U(1)_3$ chiral-boson CFT is useful but does not assume that
+the **bulk** FCI is a CFT.  The bulk is gapped.  The chiral theory follows
+from its Hall anomaly at a boundary; CFT is the low-energy language of that
+gapless boundary.
 
-### 3.7 What the present spatial CSV can and cannot establish
+There is also a direct wavefunction version.  Multiplying a Laughlin droplet
+by symmetric power sums
 
-The current CSV resolves only $N_A$.  It does **not** store momentum
-$K_\parallel$ along the cut, so it cannot organize levels by $\Delta K$ and
-cannot test either the single-edge partition sequence or the appropriate
-two-edge towers.  In the current plot, the number of dots above a given
-$N_A$ is the raw Schmidt rank of that entire block.  It should be compared
-with the binomial ceiling $R_{\max}(N_A)$, not with
-$p(\Delta K)=1,1,2,3,5,\ldots$.
+$$
+p_n=\sum_i z_i^n
+$$
 
-Its present uses are limited to:
+creates edge-density deformations while preserving bulk clustering.  Products
+$\prod_np_n^{r_n}$ at fixed added angular momentum are again counted by
+integer partitions.  This route reaches the same sequence without using a
+CFT correlator to construct the bulk wavefunction.
 
-- normalization and Schmidt-block consistency;
-- particle-number distribution across the cut;
-- A/B reflection checks for an equal bipartition;
-- qualitative inspection for separated entanglement branches.
+### 3.4 Precisely where that sequence appears in an ES plot
 
-A genuine Li-Haldane-style counting test requires extending the
-implementation to:
+The sequence $1,1,2,3,5,\ldots$ is **not** obtained by moving through the
+spatial blocks $N_A=0,1,2,\ldots$.
 
-1. preserve translation parallel to the cut;
-2. block-diagonalize $\rho_A$ by $(N_A,K_\parallel)$;
-3. choose or construct minimally entangled ground states for that cut;
-4. identify a stable low branch and compare its relative-momentum counting
-   with the one- or two-edge $U(1)_3$ prediction appropriate to the geometry.
+For one isolated edge, one should:
 
-After that extension, the edge-counting comparison would be performed
-vertically within a fixed $N_A$ block: choose its lowest edge tower, move
-through $\Delta K=0,1,2,\ldots$, and count levels below the entanglement gap.
-One would still not compare the **total** number of levels in successive
-$N_A$ blocks with the partition-number sequence.
+1. fix the subsystem charge $N_A$ and the topological/primary sector;
+2. resolve $\rho_A$ by momentum $K_\parallel$ parallel to the cut;
+3. identify the edge-vacuum momentum $K_0$;
+4. define the excess momentum $\Delta K=K_\parallel-K_0$ with the appropriate
+   finite-size wrapping convention;
+5. count only the low-lying branch below a stable entanglement gap.
 
-Until then, the momentum-resolved PES is the sharper counting diagnostic in
-this repository.
+The counting $1,1,2,3,5,\ldots$ runs **horizontally in momentum within one
+fixed charge tower**, not vertically through total ranks of different charge
+blocks.
 
-## 4. Similarities and differences between the two countings
+At finite particle number the sequence can truncate or bend because edge
+polynomials develop relations, momenta wrap around the Brillouin zone, and
+the two sides of a narrow entanglement region interact.  Agreement is sought
+first at small $\Delta K$ and then tested for stability with increasing
+system size.
 
-| question | particle ES | spatial-orbital ES |
-|:--|:--|:--|
-| What is subsystem A? | $N_A$ indistinguishable particles anywhere on the torus | all site orbitals in a spatial strip |
-| Is a physical/virtual boundary created? | no | yes, two boundaries for the present torus strip |
-| What do universal low levels count? | bulk quasihole zero modes at $(N_A,N_\phi)$ | edge oscillator/conformal towers |
-| Natural quantum numbers | subsystem 2D momentum $(K_1,K_2)$ | $N_A$ and momentum $K_\parallel$ along the cut |
-| Direct non-CFT derivation | clustering, parent-Hamiltonian zero modes, root patterns, cyclic combinatorics | locality near the cut, Hall anomaly, $K$-matrix/chiral density waves |
-| CFT role | optional route to trial states and quasihole conformal blocks | natural low-energy language of the chiral edge |
-| Main finite-size danger | wrong ground manifold or accidental PES gap | cut dependence, wrong ground-state combination, two-edge mixing, missing $K_\parallel$ |
+### 3.5 The present torus strip has two entanglement boundaries
 
-The deep similarity is bulk-edge correspondence: for model FQH states, the
-bulk quasihole counting seen by the PES and the edge counting seen by a
-properly resolved orbital/real-space ES approach the same underlying
-topological Hilbert-space structure in the thermodynamic limit.  They are not
-the same finite-size table, because one probes particles throughout the bulk
-and the other probes modes localized at a boundary.
+A cylinder-shaped region cut from a torus has two boundary circles.  Their
+orientations are opposite, so the subsystem contains a right-moving tower at
+one boundary and a left-moving tower at the other.  Ignoring zero modes for a
+moment, the oscillator content is schematically
 
-## 5. Corrected `3x6` FCI: construction and numerical audit
+$$
+Z_{\rm strip}(q,\bar q)
+=\prod_{n\ge1}\frac1{(1-q^n)(1-\bar q^n)}.
+$$
 
-This section records exactly which states enter each entanglement
-calculation and checks the new CSVs independently.  This distinction matters
-because the two spectra use different density matrices.
+If states were graded only by the **sum** of the two oscillator levels, the
+counts would be the convolution
 
-### 5.1 Correct zero-flux manifold
+$$
+\sum_{r=0}^{\ell}p(r)p(\ell-r)
+=1,2,5,10,20,\ldots.
+$$
 
-The old diagnostic driver selected the lowest state in each of three
-**distinct** momentum sectors.  That is wrong when several states of the
-topological manifold occupy the same sector.  For the `3x6` FCI the true
-lowest manifold is
+That sequence is not automatically what a momentum-resolved strip plot will
+show.  Parallel momentum is instead the difference of the two chiral
+momenta, while entanglement energy depends roughly on their positive sum and
+on generally unequal edge velocities.  Fixed total $N_A$ can also be
+distributed between the two boundaries in different ways, producing several
+primary towers, and finite strip width couples the boundaries.
+
+Therefore one must not compare the current torus-strip spectrum blindly with
+either $1,1,2,3,5,\ldots$ or $1,2,5,10,20,\ldots$.  The correct two-edge
+character and charge constraints have to be matched to the actual cut.
+
+If the goal is the cleanest possible single-chiral-edge sequence, an
+infinite-cylinder half cut, or a disk/sphere construction with one boundary
+and a conserved angular momentum, is conceptually cleaner than a finite
+torus strip.  The torus strip is still valid, but its universal low spectrum
+contains both entanglement edges.
+
+### 3.6 Why a real-space cut can diagnose an edge
+
+For a local gapped ground state, entanglement across a sharp spatial cut is
+generated predominantly by degrees of freedom within a correlation length
+of the cut.  The low entanglement Hamiltonian can therefore behave like a
+quasi-local boundary Hamiltonian.  In a chiral topological phase, that
+boundary must reproduce the anomaly of the bulk Hall response.  This is the
+cut-and-glue or entanglement form of bulk--edge correspondence.
+
+For ideal FQH model states, maps between particle, orbital, and real-space
+entanglement matrices make this statement sharper: the symmetry-resolved
+RSES counting is bounded by quasihole/edge counting and is expected to
+saturate in the appropriate thermodynamic regime.
+
+This does not make every detail of the spectrum a phase invariant.  The
+entanglement Hamiltonian can change substantially under microscopic
+deformations that leave the bulk phase unchanged.  Edge-like counting below
+a stable gap is supporting evidence; raw level positions or ranks are not.
+
+### 3.7 What the current spatial plot establishes
+
+The current CSV contains
 
 ```text
-(k1,k2,level) = (0,3,1), (0,3,2), (0,3,3),
+N_A, level, probability, entanglement_energy, dim_A, dim_B
 ```
 
-with energy splittings `0`, `0.0160538`, and `0.0162115`, followed by a gap
-of about `0.2275` from the third to the fourth state.  The obsolete pump and
-PES instead used `(0,3,1), (0,0,1), (1,3,1)`.
+but no $K_\parallel$.  It can establish:
 
-The toolbox now carries explicit `(sector, level)` state specifications, and
-the corrected summary records
+- normalization of $\rho_A$;
+- probability weight in each spatial charge sector;
+- Schmidt-rank and cutoff checks;
+- $A\leftrightarrow B$ reflection for equal bipartitions;
+- qualitative separation of groups of entanglement levels.
 
-```text
-manifold_state_levels = 0:3:1;0:3:2;0:3:3
-```
+It cannot presently establish Li--Haldane edge counting, because all
+$K_1$ sectors have been combined into each vertical $N_A$ column.  Counting
+all dots in such a column simply reproduces or approaches the binomial rank
+ceiling.
 
-The old integer-winding `3x6` charge-pump branches were therefore a
-projection artifact, not evidence against the FCI.  The corrected pump
-transports one total charge across the three-state manifold, with final
-branch values approximately $0.3221$, $0.3221$, and $0.3558$.
+For `3x6`, the current block weights are
 
-### 5.2 Corrected momentum-resolved particle PES
-
-For the particle cut, $N=6$ is split into $N_A=2$ and $N_B=4$.  The density
-matrix used by the corrected calculation is
-
-$$
-\rho_A^{\mathrm{PES}}
-=\operatorname{Tr}_{N_B=4}
- \left[
- \frac13\sum_{\alpha=1}^{3}
- |\Psi_{(0,3),\alpha}\rangle
- \langle\Psi_{(0,3),\alpha}|
- \right],
-$$
-
-where $\alpha$ is the in-sector level.  This equal-weight projector is
-invariant under any unitary rotation of the three nearly degenerate states;
-using all three is essential when they share a momentum sector.
-
-The numerical audit gives
-
-$$
-\operatorname{Tr}\rho_A^{\mathrm{PES}}
-=1.000000000000002,
-\qquad
-\dim\mathcal H_A=\binom{36}{2}=630.
-$$
-
-Sorting all 630 entanglement energies, the largest consecutive gap lies
-between
-
-$$
-\xi_{117}=5.3985263512,
-\qquad
-\xi_{118}=7.7000530006,
-$$
-
-and therefore
-
-$$
-\Delta_\xi=\xi_{118}-\xi_{117}=2.3015266494.
-$$
-
-Equivalently, the Schmidt probabilities drop by a factor
-$\exp(\Delta_\xi)\simeq9.989$ across this gap.  The 117-level low band carries
-probability weight $0.96721834$, while the remaining 513 levels carry
-$0.03278166$.  An independent enumeration of cyclic $(1,3)$-admissible pairs
-gives the same sector distribution:
-
-| $K_1$ | $K_2=0$ | $K_2=1$ | $K_2=2$ | $K_2=3$ | $K_2=4$ | $K_2=5$ |
-|--:|--:|--:|--:|--:|--:|--:|
-| 0 | 6 | 7 | 6 | 7 | 6 | 7 |
-| 1 | 6 | 7 | 6 | 7 | 6 | 7 |
-| 2 | 6 | 7 | 6 | 7 | 6 | 7 |
-
-The row sum is $39$ for each $K_1$, and the total is
-$3\times39=117$.  Thus the corrected result matches not merely the total
-count but every subsystem momentum sector.  The obsolete manifold happened
-to give the same total 117 below its largest gap, but its smaller gap
-$0.93947$ and incorrect manifold projector must not be used as evidence.
-
-### 5.3 Corrected spatial-orbital spectrum
-
-The spatial calculation is deliberately different.  The cut keeps the 18
-site orbitals in the three-cell strip $0\le y<3$ and traces out the other 18.
-The current implementation uses the absolute ground state only,
-
-$$
-\rho_A^{\mathrm{spatial}}
-=\operatorname{Tr}_B
- |\Psi_{(0,3),1}\rangle
- \langle\Psi_{(0,3),1}|,
-$$
-
-not the three-state mixed projector.  Consequently the old manifold-selection
-bug did not change this spatial CSV: its selected state was already
-$(0,3,1)$.  A minimally entangled linear combination could nevertheless be
-preferable for exposing a clean edge branch, as discussed in Section 3.1.
-
-The corrected numerical block summary is
-
-| $N_A$ | retained rank | kinematic ceiling | block weight $\operatorname{Tr}\rho_A(N_A)$ |
+| $N_A$ | retained rank | kinematic ceiling | $\operatorname{Tr}\rho_A(N_A)$ |
 |--:|--:|--:|--:|
 | 0 | 1 | 1 | $1.02711\times10^{-7}$ |
 | 1 | 18 | 18 | $9.10311\times10^{-4}$ |
@@ -1002,45 +1719,113 @@ The corrected numerical block summary is
 | 5 | 18 | 18 | $9.10311\times10^{-4}$ |
 | 6 | 1 | 1 | $1.02711\times10^{-7}$ |
 
-The total weight is unity to $5\times10^{-14}$, and the block weights and
-individual Schmidt values obey $N_A\leftrightarrow6-N_A$ reflection to
-machine precision.  The central retained rank is cutoff-sensitive, as shown
-in Section 3.2.  Because this file resolves only $N_A$ and not momentum
-parallel to the cut, neither 676 nor the total ranks in the other blocks can
-be compared with the chiral sequence $1,1,2,3,5,\ldots$.
+The reflection and total trace are excellent implementation checks.  They
+are not a topological edge-counting result.
 
-### 5.4 What the two corrected calculations establish
+### 3.8 What a genuine edge-diagnostic plot requires here
 
-The particle PES now supplies a sharp positive diagnosis: the full corrected
-ground-state projector produces the exact total and momentum-resolved
-Laughlin quasihole counting below a sizeable entanglement gap.  The spatial
-spectrum supplies strong normalization, reflection, and Schmidt-rank checks,
-but the current output does not resolve the edge momentum required for a
-Li-Haldane counting test.  These are complementary statements; the latter
-limitation does not weaken the former PES result.
+For the present strip, the next calculation should:
+
+1. retain translation $K_1$ parallel to the cut when constructing the
+   Schmidt blocks;
+2. diagonalize blocks labeled by $(N_A,K_1)$;
+3. choose or optimize a pure minimally entangled ground state for this cut;
+4. display separate fixed-$N_A$ panels of $\xi$ versus $K_1$;
+5. identify low towers and compare them with the two-edge $U(1)_3$ character,
+   including allowed charge/topological sectors;
+6. repeat for nearby cuts, parameters, and larger circumference to test that
+   the low counting is stable while nonuniversal entanglement energies move.
+
+Only after that extension should the spatial plot be advertised as a direct
+edge-counting diagnostic.  Until then, the momentum-resolved PES is the
+sharper entanglement-spectrum result in this repository.
+
+---
+
+## 4. Side-by-side reading guide
+
+| question | particle ES | current site real-space ES |
+|:--|:--|:--|
+| What is subsystem A? | exactly $N_A$ particles anywhere on the torus | all microscopic site orbitals in a strip |
+| Does $N_A$ define a new density matrix? | yes | no; it labels blocks of one $\rho_A$ |
+| Is a virtual boundary created? | no | yes; two boundaries for the torus strip |
+| Natural symmetry labels | $(K_1,K_2)$ | $(N_A,K_\parallel)$, although $K_\parallel$ is not yet output |
+| Universal low states | bulk quasihole zero modes | boundary oscillator/primary towers |
+| Counting target here | cyclic $(1,3)$ admissible roots | two-edge $U(1)_3$ character after momentum resolution |
+| Meaning of total raw rank | nonuniversal microscopic rank | nonuniversal binomial-limited rank |
+| Current verdict | exact total and momentum counting on `3x4`, `3x5`, `3x6` | valid Schmidt calculation, but not yet an edge-counting test |
+
+The two successful universal countings are related by bulk--edge
+correspondence, but they are not the same finite-size table.  The PES counts
+quasiholes that can move throughout the bulk at fixed $N_A$ and $N_\phi$.
+The spatial ES counts modes living near one or more boundaries and graded by
+boundary momentum.
+
+---
+
+## 5. A practical checklist for future plots
+
+### Particle ES
+
+- Use the full low-energy torus manifold, including multiple in-sector levels
+  when necessary.
+- State $N_A$, $N_\phi=N_{\rm cell}$, and the microscopic PES dimension.
+- Predict the total admissible count before examining numerical gaps.
+- Predict its complete momentum-sector distribution.
+- Mark a common low/high separation and verify the count below it.
+- Prefer $N_A\le N/2$ and use separate panels for an $N_A$ sweep.
+- Test stability with geometry and Hamiltonian parameters.
+
+### Site real-space ES
+
+- State the real-space region and number of boundary components.
+- Use a pure minimally entangled ground state appropriate to the cut.
+- Resolve charge and momentum parallel to the cut.
+- Compare low towers within a fixed charge/topological sector, not total
+  $N_A$-block ranks.
+- Use the one-edge or two-edge character appropriate to the geometry.
+- Treat binomial ranks only as implementation bounds.
+
+---
 
 ## 6. Primary references
 
-- Bernevig and Haldane, [*Fractional Quantum Hall States and Jack
-  Polynomials*](https://arxiv.org/abs/0707.3637): root configurations,
-  squeezing, clustering, and generalized exclusion principles.
-- Li and Haldane, [*Entanglement Spectrum as a Generalization of Entanglement
-  Entropy*](https://arxiv.org/abs/0805.0332): the orbital entanglement spectrum
-  and edge-like low-level counting.
+- Bernevig and Haldane,
+  [*Fractional Quantum Hall States and Jack Polynomials*](https://arxiv.org/abs/0707.3637):
+  dominant roots, squeezing, clustering, and generalized Pauli principles.
+- Bergholtz and Karlhede,
+  [*Quantum Hall system in Tao--Thouless limit*](https://arxiv.org/abs/0712.1927):
+  the one-dimensional thin-torus limit, fractional domain walls, and
+  continuity to bulk hierarchy states.
+- Mazaheri, Ortiz, Nussinov, and Seidel,
+  [*Zero modes, Bosonization and Topological Quantum Order: The Laughlin State
+  in Second Quantization*](https://arxiv.org/abs/1409.3577): a polynomial-free,
+  guiding-center algebraic construction of Laughlin-type zero modes.
+- Li and Haldane,
+  [*Entanglement Spectrum as a Generalization of Entanglement Entropy*](https://arxiv.org/abs/0805.0332):
+  the original orbital-ES fingerprint and low-lying edge structure.
 - Chandran, Hermanns, Regnault, and Bernevig,
-  [*Bulk-Edge Correspondence in the Entanglement
-  Spectra*](https://arxiv.org/abs/1102.2218): relation among particle,
-  orbital, bulk-quasihole, and edge counting.
-- Regnault and Bernevig, [*Fractional Chern
-  Insulator*](https://arxiv.org/abs/1105.4867): the $(1,3)$ rule, spectral
-  flow, and PES quasihole counting for a lattice $1/3$ FCI.
-- Qi, [*Generic Wavefunction Description of Fractional Quantum Anomalous Hall
-  States and Fractional Topological
-  Insulators*](https://arxiv.org/abs/1105.4298): hybrid-Wannier mapping from a
-  Chern band to Landau-level-like orbitals.
-- Sterdyniak *et al.*, [*Real-Space Entanglement Spectrum of Quantum Hall
-  States*](https://arxiv.org/abs/1111.2810): real-space cuts, quasihole
-  counting, and edge-CFT bounds.
-- Chandran, Khemani, and Sondhi, [*How Universal Is the Entanglement
-  Spectrum?*](https://arxiv.org/abs/1311.2946): limitations on treating the
-  detailed entanglement spectrum as a phase invariant.
+  [*Bulk-Edge Correspondence in the Entanglement Spectra*](https://arxiv.org/abs/1102.2218):
+  the relation between PES quasihole counting and orbital-edge counting.
+- Majidzadeh Garjani, Estienne, and Ardonne,
+  [*On the particle entanglement spectrum of the Laughlin states*](https://arxiv.org/abs/1501.04016):
+  the polynomial-ideal formulation of PES rank and why finite-size rank
+  saturation is subtler than the quasihole support bound.
+- Sterdyniak, Chandran, Regnault, Bernevig, and Bonderson,
+  [*Real-Space Entanglement Spectrum of Quantum Hall States*](https://arxiv.org/abs/1111.2810):
+  sharp real-space cuts and their relation to quasihole and edge counting.
+- Regnault and Bernevig,
+  [*Fractional Chern Insulator*](https://arxiv.org/abs/1105.4867): the
+  fermionic `1/3` FCI PES and $(1,3)$ quasihole fingerprint.
+- Bernevig and Regnault,
+  [*Emergent Many-Body Translational Symmetries of Abelian and Non-Abelian
+  Fractionally Filled Topological Insulators*](https://arxiv.org/abs/1110.4488):
+  folding continuum quasihole momenta into FCI Brillouin-zone sectors.
+- Qi,
+  [*Generic Wavefunction Description of Fractional Quantum Anomalous Hall
+  States and Fractional Topological Insulators*](https://arxiv.org/abs/1105.4298):
+  the hybrid-Wannier bridge between Chern bands and Landau-level orbitals.
+- Chandran, Khemani, and Sondhi,
+  [*How Universal Is the Entanglement Spectrum?*](https://arxiv.org/abs/1311.2946):
+  why detailed entanglement spectra must not be treated as immutable phase
+  invariants.

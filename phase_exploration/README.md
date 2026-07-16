@@ -18,20 +18,24 @@ readable filenames.
 
 Edit [`src/config.jl`](src/config.jl) before a production campaign. It contains
 the model parameters, geometries, 0.1-spaced numerator sweep, solver policy,
-and the three common deep-phase diagnostic/scaling points:
+and the common diagnostic/scaling points:
 
 | phase | numerator `x` | physical `t''` | default manifold |
 |:--|--:|--:|--:|
-| AHC | `-3.0` | `-0.6213203436` | three lowest eigenstates |
+| AHC | `-0.54(2+2sqrt(2))` | `-0.54` | three lowest eigenstates |
 | FCI | `-1.0` | `-0.2071067812` | three lowest eigenstates |
-| CDW | `1.5` | `0.3106601718` | three lowest eigenstates |
+| candidate CDW | `0.25(2+2sqrt(2))` | `0.25` | three lowest eigenstates |
 
-These defaults encode the archived small-cluster evidence; they are not hard
-claims about the larger sizes. If the new sweep moves a large-gap plateau,
-change the three values once in `PHASE_SPECS` and regenerate diagnostics/gaps
-with `--overwrite true` (or remove the corresponding old result/checkpoint
-directories). Checkpoint loading validates the model, filling, and flux and
-will refuse incompatible cached states.
+The AHC and positive-side points were deliberately moved closer to the FCI,
+where the same phase is more likely to be sampled on all finite geometries.
+The `CDW` key and output directory are retained for compatibility, but the
+positive-side phase is not assumed to be a CDW.  Its identity, the distinction
+between charge and neutral gaps, and the fixed-FCI-manifold tracking convention
+are developed in [`competing_phase_diagnostics.md`](competing_phase_diagnostics.md).
+Diagnostic and charge-gap checkpoints live in parameter-specific
+`x_<numerator>` directories.  Loading still validates the model, filling, and
+flux; `--refresh true` rebuilds stale derived CSVs while resuming compatible
+checkpoints, whereas `--overwrite true` also recomputes those checkpoints.
 
 The default solver is explicit sparse-matrix ED for active geometries from 3x3
 through 3x7. On Hyak, Hamiltonian matrix construction is distributed across
@@ -67,7 +71,8 @@ This performs a zero-flux all-sector scan, chooses the configured number of
 globally lowest eigenstates (retaining both momentum sector and in-sector
 level), and generates:
 
-- all-momentum-sector spectrum flow over three flux quanta (49 points);
+- all-momentum-sector spectrum flow over three flux quanta (145 points,
+  i.e. 48 intervals per flux quantum);
 - the manifold charge pump over one flux quantum;
 - a spatial/orbital cut ES for the absolute ground state;
 - the Li-Haldane/Regnault-Bernevig momentum-resolved particle ES of the
@@ -79,9 +84,21 @@ checkpoints are shared and resumed sector by sector. Use `--refresh true` to
 rebuild derived CSVs while retaining compatible checkpoints; `--overwrite
 true` also recomputes the checkpoints.
 
+The diagnostics renderer extracts `E4-E3` along the full stored flux path and
+writes `manifold_gap_flow.svg`.  A pump plot is visibly marked with a warning
+when the assumed three-state manifold touches outside states, because its
+branch endpoints are then not a globally isolated-bundle invariant.
+
 See [`entanglement_counting_notes.md`](entanglement_counting_notes.md) for the
 `(1,3)` PES derivation, geometry-by-geometry counting, and an explanation of
 what the current spatial ES can and cannot establish.
+
+The sweep plotter also writes `zero_flux_gap_diagnostics_<geometry>.svg`.  Its
+left panel separates the ground-referenced neutral excitation `E4-E1`, the
+instantaneous three-state isolation `E4-E3`, and the width `E3-E1`.  Its right
+panel follows the fixed FCI reference states—including levels 1--3 of `(0,3)`
+on `3x6`—and shows their signed isolation from all other states, their
+same-sector direct gap, and their internal width.
 
 For the corrected `3x6` FCI run, the three manifold states are levels 1--3
 of the same momentum sector `(0,3)`.  The momentum-resolved particle PES uses
@@ -98,6 +115,10 @@ One finite-size charge-gap datum is:
 julia --project=. phase_exploration/bin/run_charge_gap_point.jl \
   --phase FCI --geometry 3x5
 ```
+
+As for diagnostics, use `--refresh true` to replace the result CSV while
+retaining a compatible, parameter-specific checkpoint.  Reserve `--overwrite
+true` for intentionally recomputing the ED sectors.
 
 It scans every momentum sector at `N-1`, `N`, and `N+1`, then stores
 `Delta_c = E0(N+1) + E0(N-1) - 2 E0(N)`. Run it for 3x3, 3x4, 3x5, 3x6, and
@@ -127,9 +148,13 @@ Other plot kinds are `sweep`, `ed-spectra`, `structure`, `diagnostics`, and
 and recreates its zero-twist, symmetry-resolved ED spectrum in the same style
 as the package's `plot_spectrum`, grouped by geometry. The sweep renderer
 creates separate spectrum-rank, `max|S|`, and normalized `max|S/mean(S)|`
-figures for every geometry plus multi-geometry panels. Each sweep point gets a
+figures for every geometry plus multi-geometry panels. In the spectrum-rank
+sweeps, line color identifies the instantaneous energy rank and marker shape
+identifies that level's momentum sector; both keys are placed in an external
+legend because a rank can change sector at a crossing. Each sweep point gets a
 two-panel finite-grid/dense-grid 2D structure-factor map. Diagnostic charge-pump
-and spectrum-flow legends identify their momentum sectors. Spectrum-flow plots
+and spectrum-flow legends identify their momentum sectors; the accompanying
+manifold-gap plot tests the pump's spectral-isolation prerequisite. Spectrum-flow plots
 follow the ten states that are lowest at zero flux (configurable with
 `--max-flow-curves`, up to ten), using ten distinct colors and an external
 legend so neither colors nor labels obscure the levels. The complete all-sector
@@ -170,9 +195,9 @@ through environment variables.
 bash phase_exploration/hpc/hyak_slurm_gen.sh
 ```
 
-This writes one `.sbatch` file per `(geometry, t'')` sweep point, one per
-`(geometry, phase)` diagnostic, and one per `(geometry, phase)` charge-gap
-point under `hpc/generated/`. The accompanying `data_jobs.txt` is the exact
+This writes one `.sbatch` file per `(geometry, t'')` sweep point, plus diagnostic
+and charge-gap jobs for the two competing phases AHC and candidate CDW.  The
+confirmed FCI is not rerun.  The accompanying `data_jobs.txt` is the exact
 submission manifest. Review the collection, then queue everything with:
 
 ```bash

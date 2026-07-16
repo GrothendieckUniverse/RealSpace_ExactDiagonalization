@@ -29,13 +29,25 @@ struct PhaseSpec
     manifold_size::Int
 end
 
-# Deep, large-gap points inferred from the archived 3x4/3x5 study.
-# These are deliberately centralized: edit here before generating the jobs if
-# a new preliminary sweep suggests better common points for all geometries.
+# Common diagnostic points for the two phases competing with the confirmed FCI.
+# AHC and CDW retain their historical output-directory names, but the positive-
+# t'' point is only a candidate CDW until its order and low-energy manifold pass
+# the finite-size tests described in competing_phase_diagnostics.md.
 const PHASE_SPECS = Dict{Symbol,PhaseSpec}(
-    :AHC => PhaseSpec(:AHC, -3.0, 3),
+    :AHC => PhaseSpec(:AHC, -0.54 * TPP_DENOMINATOR, 3),
     :FCI => PhaseSpec(:FCI, -1.0, 3),
-    :CDW => PhaseSpec(:CDW, 1.5, 3),
+    :CDW => PhaseSpec(:CDW, 0.25 * TPP_DENOMINATOR, 3),
+)
+
+# The symmetry slots that form the already-established FCI manifold at its
+# reference point.  Each entry is ((k1,k2), level_in_sector), not merely a
+# sector label: on 3x6 all three states belong to (0,3).  At another parameter,
+# a slot does not by itself guarantee wavefunction continuity through a
+# same-sector avoided crossing; that requires overlaps/fidelity tracking.
+const FCI_REFERENCE_MANIFOLD = Dict{Tuple{Int,Int},Vector{Tuple{Tuple{Int,Int},Int}}}(
+    (3, 4) => [((2, 2), 1), ((1, 2), 1), ((0, 2), 1)],
+    (3, 5) => [((0, 0), 1), ((1, 0), 1), ((2, 0), 1)],
+    (3, 6) => [((0, 3), 1), ((0, 3), 2), ((0, 3), 3)],
 )
 
 actual_tpp(x::Real) = Float64(x) / TPP_DENOMINATOR

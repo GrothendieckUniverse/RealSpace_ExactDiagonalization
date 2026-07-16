@@ -96,7 +96,7 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     observables::Vector{Symbol}=[:flow, :pump, :spatial_es, :pes],
     zero_nev::Int=10,
     flow_nev::Int=3,
-    flow_flux_values::Vector{Float64}=collect(range(0.0, 3.0; length=49)),
+    flow_flux_values::Vector{Float64}=collect(range(0.0, 3.0; length=145)),
     pump_flux_values::Vector{Float64}=collect(range(0.0, 1.0; length=17)),
     flux_direction::Int=1,
     polarization_direction::Int=2,
@@ -111,8 +111,11 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     nmanifold = isnothing(manifold_size) ? spec.manifold_size : manifold_size
     phase = String(spec.name)
     outdir = joinpath(RESULT_ROOT, "diagnostics", phase, geometry_tag(sample))
-    ckpt_zero = joinpath(CHECKPOINT_ROOT, "diagnostics", phase, geometry_tag(sample), "zero_flux.jld2")
-    ckpt_flux = joinpath(CHECKPOINT_ROOT, "diagnostics", phase, geometry_tag(sample), "flux")
+    checkpoint_point = "x_$(tpp_tag(xvalue))"
+    ckpt_zero = joinpath(CHECKPOINT_ROOT, "diagnostics", phase, geometry_tag(sample),
+        checkpoint_point, "zero_flux.jld2")
+    ckpt_flux = joinpath(CHECKPOINT_ROOT, "diagnostics", phase, geometry_tag(sample),
+        checkpoint_point, "flux")
     output_for = Dict(
         :flow => joinpath(outdir, "spectrum_flow.csv"),
         :pump => joinpath(outdir, "charge_pump.csv"),

@@ -13,6 +13,7 @@ function run_charge_gap_point(phase_name, sample::Tuple{Int,Int};
     x::Union{Nothing,Real}=nothing,
     mode::Symbol=mode_for(sample, :charge_gap),
     nev::Int=2,
+    refresh::Bool=false,
     overwrite::Bool=false,
 )
     spec = phase_spec(phase_name)
@@ -20,9 +21,10 @@ function run_charge_gap_point(phase_name, sample::Tuple{Int,Int};
     xvalue = isnothing(x) ? spec.numerator : Float64(x)
     n0 = default_particle_number(sample)
     outdir = joinpath(RESULT_ROOT, "charge_gap", phase, geometry_tag(sample))
-    ckptdir = joinpath(CHECKPOINT_ROOT, "charge_gap", phase, geometry_tag(sample))
+    ckptdir = joinpath(CHECKPOINT_ROOT, "charge_gap", phase, geometry_tag(sample),
+        "x_$(tpp_tag(xvalue))")
     summary_path = joinpath(outdir, "charge_gap.csv")
-    if isfile(summary_path) && !overwrite
+    if isfile(summary_path) && !refresh && !overwrite
         @info "Charge-gap point already complete; skipping" phase sample summary_path
         return summary_path
     end

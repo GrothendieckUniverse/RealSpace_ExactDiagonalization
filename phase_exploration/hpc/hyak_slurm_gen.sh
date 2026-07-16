@@ -36,11 +36,15 @@ SWEEP_NUMERATORS=(
    0.0  0.1  0.2  0.3  0.4  0.5  0.6  0.7  0.8  0.9
    1.0  1.1  1.2  1.3  1.4  1.5
 )
-PHASES=(AHC FCI CDW)
+# The FCI campaign is complete.  Production diagnostics now target only its
+# two neighboring competitors, using the common points in src/config.jl.
+COMPETING_PHASES=(AHC CDW)
 SWEEP_GEOMETRIES=(3x4 3x5 3x6)
 DIAGNOSTIC_GEOMETRIES=(3x4 3x5 3x6)
 GAP_GEOMETRIES=(3x3 3x4 3x5 3x6 3x7)
-DIAGNOSTIC_PROTOCOL="manifold_levels_v2_flow49"
+FLOW_STEPS=145
+DIAGNOSTIC_PROTOCOL="competing_points_v4_tpp_m0p54_p0p25_flow${FLOW_STEPS}"
+GAP_PROTOCOL="competing_points_v3_tpp_m0p54_p0p25"
 
 GENERATED_DIR="${SCRIPT_DIR}/generated"
 HYAK_LOG_DIR="${REPO_DIR}/phase_exploration/hpc/logs"
@@ -240,10 +244,10 @@ done
 
 for geometry in "${DIAGNOSTIC_GEOMETRIES[@]}"; do
   resource_for diagnostics "${geometry}"
-  for phase in "${PHASES[@]}"; do
+  for phase in "${COMPETING_PHASES[@]}"; do
     phase_lower="${phase,,}"
     job="${GENERATED_DIR}/diagnostics_${geometry}_${phase_lower}.sbatch"
-    write_header "${job}" "tpp_dx2_${geometry}_${phase_lower}"
+    write_header "${job}" "tpp_dx3_${geometry}_${phase_lower}"
     cat >> "${job}" <<EOF
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/${DIAGNOSTIC_PROTOCOL}.done
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/zero_flux_spectrum.csv
@@ -257,9 +261,9 @@ for geometry in "${DIAGNOSTIC_GEOMETRIES[@]}"; do
   "${REPO_DIR}/phase_exploration/bin/run_diagnostic_point.jl" \
   --phase "${phase}" --geometry "${geometry}" --mode "${MODE}" \
   --observables flow,pump,spatial_es,pes --zero-nev 10 --flow-nev 3 \
-  --flow-steps 49 --pump-steps 17 --pes-na 2 --refresh true
+  --flow-steps "${FLOW_STEPS}" --pump-steps 17 --pes-na 2 --refresh true
 printf 'protocol=%s\nflow_steps=%s\nmanifold_selection=%s\n' \
-  "${DIAGNOSTIC_PROTOCOL}" "49" "global_lowest_states_with_sector_levels" \
+  "${DIAGNOSTIC_PROTOCOL}" "${FLOW_STEPS}" "global_lowest_states_with_sector_levels" \
   > "${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/${DIAGNOSTIC_PROTOCOL}.done"
 mark_complete
 EOF
@@ -269,16 +273,21 @@ done
 
 for geometry in "${GAP_GEOMETRIES[@]}"; do
   resource_for charge_gap "${geometry}"
-  for phase in "${PHASES[@]}"; do
+  for phase in "${COMPETING_PHASES[@]}"; do
     phase_lower="${phase,,}"
     job="${GENERATED_DIR}/charge_gap_${geometry}_${phase_lower}.sbatch"
-    write_header "${job}" "tpp_cg_${geometry}_${phase_lower}"
+    write_header "${job}" "tpp_cg2_${geometry}_${phase_lower}"
     cat >> "${job}" <<EOF
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/${GAP_PROTOCOL}.done
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/charge_gap.csv
 "${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
   "${REPO_DIR}/phase_exploration/bin/run_slurm_job.jl" \
   "${REPO_DIR}/phase_exploration/bin/run_charge_gap_point.jl" \
-  --phase "${phase}" --geometry "${geometry}" --mode "${MODE}" --nev 2
+  --phase "${phase}" --geometry "${geometry}" --mode "${MODE}" --nev 2 \
+  --refresh true
+printf 'protocol=%s\nparameter_source=%s\n' \
+  "${GAP_PROTOCOL}" "src/config.jl:PHASE_SPECS" \
+  > "${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/${GAP_PROTOCOL}.done"
 mark_complete
 EOF
     printf '%s\n' "$(basename "${job}")" >> "${DATA_MANIFEST}"
