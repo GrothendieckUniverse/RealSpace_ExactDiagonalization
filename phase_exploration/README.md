@@ -24,8 +24,8 @@ and the characteristic diagnostic/scaling points (all entries are physical
 | working phase label | physical `t''` values | selected manifold |
 |:--|:--|:--|
 | AHC | `-0.50, -0.45` | three lowest eigenstates |
-| FCI | `-0.30, -0.15, 0.00` | three lowest eigenstates |
-| candidate CDW | `0.05, 0.10, 2.00` | three lowest eigenstates |
+| FCI | `-0.30, -0.15, 0.00, 0.05, 0.10` | three lowest eigenstates |
+| candidate CDW | `0.20, 0.30` | three lowest eigenstates |
 
 The `CDW` key and output directory are retained for compatibility, but the
 positive-side phase is not assumed to be a CDW. The structure-factor puzzles,
@@ -48,8 +48,12 @@ thread, which exhausts memory on this geometry. CLI `--mode matrix` or
 ## Local jobs
 
 One sweep point produces the ranked all-sector spectrum and two versions of
-the connected structure factor: the absolute ground state and the equal-weight
-projector over the three fixed FCI reference slots. Each version has an
+the connected structure factor: the absolute ground state and the normalized
+projector over the three selected FCI reference states. The latter is called
+the **FCI-manifold projector structure factor**. It is invariant under any
+permutation or unitary mixing within the same three-state subspace, including
+a rearrangement of the FCI ground-state manifold, but not under a change of
+the selected subspace itself. Each version has an
 allowed-momentum grid, a dense 101x101 map, and peak metrics:
 
 ```bash
@@ -73,7 +77,7 @@ This performs a zero-flux all-sector scan, chooses the configured number of
 globally lowest eigenstates (retaining both momentum sector and in-sector
 level), and generates:
 
-- absolute-ground-state and equal-weight selected-manifold `S(q)` maps and
+- absolute-ground-state and selected-manifold projector `S(q)` maps and
   metrics;
 - all-momentum-sector spectrum flow over one flux quantum (21 points,
   i.e. 20 intervals, on the same grid as the charge pump);
@@ -91,7 +95,9 @@ true` also recomputes the checkpoints.
 The diagnostics renderer extracts `E4-E3` along the full stored flux path and
 writes `manifold_gap_flow.svg`.  A pump plot is visibly marked with a warning
 when the assumed three-state manifold touches outside states, because its
-branch endpoints are then not a globally isolated-bundle invariant.
+branch endpoints are then not a globally isolated-bundle invariant. Candidate-
+CDW pump plots are restricted to the currently configured characteristic
+points, so obsolete positive-side results such as `t''=0.21` are not rendered.
 
 See [`entanglement_counting_notes.md`](entanglement_counting_notes.md) for the
 `(1,3)` PES derivation, geometry-by-geometry counting, and an explanation of
@@ -105,7 +111,7 @@ same-sector-gap curves are mixed into this figure.
 
 For the corrected `3x6` FCI run, the three manifold states are levels 1--3
 of the same momentum sector `(0,3)`.  The momentum-resolved particle PES uses
-the equal-weight projector over all three states and has exactly 117 levels
+the normalized projector over all three states and has exactly 117 levels
 below its largest entanglement gap, with the expected 6/7 even/odd-$K_2$
 sector counting.  The spatial-orbital spectrum instead uses the absolute
 ground state `(0,3,1)` and is resolved only by subsystem particle number.
@@ -152,8 +158,8 @@ and recreates its zero-twist, symmetry-resolved ED spectrum in the same style
 as the package's `plot_spectrum`, grouped by geometry. The sweep renderer
 creates separate spectrum, `max|S|`, normalized `max|S/mean(S)|`, and peak
 wavevector figures for every geometry plus multi-geometry panels. The two
-metric curves compare the absolute ground state with the equal-weight fixed
-FCI reference projector; dotted guides mark changes of the rank-one ground
+metric curves compare the absolute ground state with the FCI-manifold
+projector structure factor; dotted guides mark changes of the rank-one ground
 state. The spectrum sweeps plot the
 lowest 20 global levels by default and use one
 default circular marker, with lines connecting the same momentum-sector and

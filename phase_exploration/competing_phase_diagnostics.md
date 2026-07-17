@@ -5,9 +5,9 @@
 The zero-flux ED spectrum on $3\times5$ has a well-separated group of three
 low states over roughly
 
-\[
+$$
 t''\in[-0.41,0.15].
-\]
+$$
 
 This was previously used as the finite-size FCI window: the FCI triplet is
 lost when other levels descend into it, consistent with a roton gap closing.
@@ -29,16 +29,16 @@ These observations pose three distinct questions:
 The new campaign is designed to answer these questions without assigning a
 phase from any one curve.
 
-## 1. Rank-one and manifold observables answer different questions
+## 1. Rank-one and FCI-manifold projector observables answer different questions
 
 The old sweep evaluates the connected structure factor in the absolute ground
 state,
 
-\[
+$$
 S_0(\mathbf q)=\frac{1}{N_s}\sum_{ij}e^{i\mathbf q\cdot(\mathbf r_i-\mathbf r_j)}
 \left[\langle 0|n_i n_j|0\rangle-
 \langle 0|n_i|0\rangle\langle 0|n_j|0\rangle\right].
-\]
+$$
 
 At an exact crossing between different momentum sectors, the identity of
 $|0\rangle$ changes discontinuously.  Its structure factor can therefore jump
@@ -46,25 +46,55 @@ even if the two states are members of the same finite-size topological
 ground-state manifold.  Such a jump is a state-selection effect, not evidence
 for a bulk phase transition.
 
-The appropriate comparison inside an isolated three-state FCI manifold
-$\mathcal F$ is the equal-weight density matrix
+The basis-invariant comparison inside an isolated three-state FCI manifold
+$\mathcal F$ is the **FCI-manifold projector structure factor**, denoted
+$S_{\mathcal F}^{\mathrm{proj}}(\mathbf q)$.  Define the subspace projector and
+its normalized density matrix by
 
-\[
-\rho_{\mathcal F}=\frac{1}{3}\sum_{a\in\mathcal F}|\Psi_a\rangle
-\langle\Psi_a|.
-\]
+$$
+P_{\mathcal F}=\sum_{a=1}^{3}|\Psi_a\rangle\langle\Psi_a|,
+\qquad
+\rho_{\mathcal F}=\frac{P_{\mathcal F}}{\operatorname{Tr}P_{\mathcal F}}
+=\frac{P_{\mathcal F}}{3}.
+$$
 
-The code now computes the connected correlator of this mixed state.  The
-one-body densities are averaged before the disconnected contribution is
-subtracted, so this is the structure factor of $\rho_{\mathcal F}$ rather than
-merely the average of three already-connected curves.  The result is invariant
-under a unitary rotation of a complete isolated triplet and cannot change just
-because its members exchange energy rank.
+The plotted quantity is
+
+$$
+S_{\mathcal F}^{\mathrm{proj}}(\mathbf q)
+=\frac{1}{N_s}\sum_{ij}e^{i\mathbf q\cdot(\mathbf r_i-\mathbf r_j)}
+\left[
+\operatorname{Tr}(\rho_{\mathcal F}n_i n_j)
+-\operatorname{Tr}(\rho_{\mathcal F}n_i)
+ \operatorname{Tr}(\rho_{\mathcal F}n_j)
+\right].
+$$
+
+This is the connected structure factor of the normalized projector.  It is
+not the arithmetic mean of three already-connected $S_a(\mathbf q)$ curves:
+the one-body density is first evaluated with $\rho_{\mathcal F}$, and only
+then is the disconnected product subtracted.
+
+For any unitary change of basis within the same three-dimensional subspace,
+$|\widetilde\Psi_b\rangle=\sum_a U_{ba}|\Psi_a\rangle$, the sum of projectors
+is unchanged.  Therefore $P_{\mathcal F}$, $\rho_{\mathcal F}$, and
+$S_{\mathcal F}^{\mathrm{proj}}(\mathbf q)$ are exactly invariant under a
+permutation, energy-rank reordering, or arbitrary unitary mixing of the three
+FCI states.  This is the precise sense in which the diagnostic is insensitive
+to an FCI ground-state-manifold rearrangement.
+
+The invariance does **not** apply if the selected three-dimensional subspace
+itself changes.  Mixing with a fourth state, selecting the wrong in-sector
+level after an avoided crossing, or losing spectral isolation can change
+$P_{\mathcal F}$.  The projector structure factor can also evolve smoothly
+with $t''$ as the physical FCI subspace evolves.  Thus it removes basis-choice
+artifacts inside a fixed subspace; it does not make the observable constant
+through a phase transition.
 
 The fixed reference slots used through the sweep are
 
 | geometry | three FCI reference states $(k_1,k_2;\ell)$ |
-|:--|:--|
+|:---|:---|
 | $3\times4$ | $(2,2;1),(1,2;1),(0,2;1)$ |
 | $3\times5$ | $(0,0;1),(1,0;1),(2,0;1)$ |
 | $3\times6$ | $(0,3;1),(0,3;2),(0,3;3)$ |
@@ -76,10 +106,10 @@ one sector.  Keeping the in-sector level is essential.
 The comparison has a direct interpretation:
 
 | observation | finite-size conclusion |
-|:--|:--|
-| rank-one curve jumps, projector average is smooth | reordering within the selected triplet caused the jump |
+|:---|:---|
+| rank-one curve jumps, manifold-projector curve is smooth | reordering within the selected triplet caused the jump |
 | both curves change at the same point while the triplet remains isolated | the three-dimensional low-energy subspace itself changes; investigate a genuine transition or avoided crossing |
-| projector average becomes irregular after outside levels enter | the fixed FCI reference projector is no longer an isolated ground manifold, so it is only a tracking diagnostic |
+| manifold-projector curve becomes irregular after outside levels enter | the selected FCI subspace is no longer an isolated ground manifold, so its projector is only a tracking diagnostic |
 | peak value kinks exactly when the maximizing $\mathbf q$ changes | kink of the `max` envelope, not necessarily a nonanalytic correlator |
 
 This test should be read first on $3\times5$ and $3\times6$ over
@@ -89,9 +119,9 @@ $t''\in[-0.4,0]$.
 
 Even if every individual $S(\mathbf q;t'')$ is smooth, the displayed maximum
 
-\[
+$$
 M(t'')=\max_{\mathbf q}S(\mathbf q;t'')
-\]
+$$
 
 is an upper envelope.  When two allowed momenta exchange which one is largest,
 $M$ can have a kink.  The new sweep output therefore retains the peak
@@ -101,10 +131,10 @@ finite-grid explanation.
 
 The normalized curve has another possible source of structure:
 
-\[
+$$
 R(t'')=\frac{\max_{\mathbf q}|S(\mathbf q;t'')|}
 {|\operatorname{mean}_{\mathbf q}S(\mathbf q;t'')|}.
-\]
+$$
 
 A smooth but small or rapidly varying denominator can amplify a weak feature
 of the numerator.  The CSVs retain the numerator, `mean_S`, and the alternative
@@ -120,7 +150,7 @@ to a crossing of higher levels.  The defensible audit is:
 
 1. check whether the absolute ground-state sector changes;
 2. check whether the maximizing momentum changes;
-3. compare the rank-one and projector-averaged curves;
+3. compare the rank-one and FCI-manifold projector curves;
 4. inspect the ground-to-excited and triplet-isolation gaps;
 5. if all remain inconclusive, calculate neighboring-$t''$ ground-state
    fidelity or wavefunction overlaps to expose a same-sector avoided crossing.
@@ -153,11 +183,11 @@ the resulting state could be an AHC, a conventional CDW, a topological
 charge-ordered phase, or a finite-size crossover between them.  The distinction
 requires simultaneous scaling of
 
-\[
+$$
 \Delta_{\rm roton},\qquad S(\mathbf Q)/N_s,\qquad
 \text{low-energy momenta and multiplicity},\qquad
 \text{and a valid Hall response}.
-\]
+$$
 
 The interval $[-0.41,0.15]$ should therefore be called the observed
 finite-size three-state-isolation window, not a thermodynamic phase boundary
@@ -167,15 +197,15 @@ determined by ED alone.
 
 At each $t''$, order all zero-flux energies from all momentum sectors as
 
-\[
+$$
 E_0\le E_1\le E_2\le E_3\le\cdots.
-\]
+$$
 
 The two compact gap curves remain
 
-\[
+$$
 W_3=E_2-E_0,\qquad \Delta_{3\to4}=E_3-E_2.
-\]
+$$
 
 $W_3$ is the width of the three globally lowest states and
 $\Delta_{3\to4}$ is their instantaneous isolation.  The ground-referenced
@@ -184,9 +214,9 @@ quantity is $E_3-E_0=W_3+\Delta_{3\to4}$.
 These rank gaps do not guarantee that the same physical states are being
 followed.  The spectrum sweep therefore keeps the fixed FCI slots colored and
 all other levels gray.  Once a gray level descends below a colored reference
-state, the fixed projector average remains useful for diagnosing ancestry, but
-it must no longer be called the ground-state FCI structure factor without an
-overlap calculation.
+state, the selected-manifold projector remains useful for diagnosing ancestry,
+but it must no longer be called the ground-state FCI structure factor without
+an overlap calculation.
 
 ## 5. Charge pump: necessary isolation checks
 
@@ -194,10 +224,10 @@ A charge-pump trajectory is a topological diagnostic only for a state or
 subspace that is spectrally isolated for the complete twist path.  For a
 rank-three bundle one needs a smooth projector
 
-\[
+$$
 P(\theta)=\sum_{a=1}^{3}|\Psi_a(\theta)\rangle
 \langle\Psi_a(\theta)|
-\]
+$$
 
 with a positive gap to every state outside it at every $\theta$.  Internal
 degeneracy and permutation are allowed for a non-Abelian bundle; touching an
@@ -222,20 +252,22 @@ important for the old AHC and positive-side claims.
 
 ## 6. New characteristic points
 
-The previous single FCI point near $t''=-0.21$ is replaced by three points on
-the two sides of the suspicious $3\times5$ jump.  The AHC and positive-side
-points are also replaced as requested.
+The previous single FCI point near $t''=-0.21$ is replaced by five points that
+span the two sides of the suspicious $3\times5$ jump and extend through the
+positive-side FCI region identified by the fractional charge pump.  The AHC
+and candidate-CDW points are also replaced as requested.
 
 | working label | physical $t''$ | numerator $x=(2+2\sqrt2)t''$ | purpose |
-|:--|--:|--:|:--|
+|:---|---:|---:|:---|
 | AHC | $-0.50$ | $-2.4142135624$ | proposed AHC, farther left |
 | AHC | $-0.45$ | $-2.1727922061$ | proposed AHC, near the left spectral edge |
 | FCI | $-0.30$ | $-1.4485281374$ | before the $3\times5$ jump |
 | FCI | $-0.15$ | $-0.7242640687$ | after the jump |
 | FCI | $0.00$ | $0$ | near the second left-window kink |
-| candidate CDW | $0.05$ | $0.2414213562$ | positive-side near-boundary point |
-| candidate CDW | $0.10$ | $0.4828427125$ | positive-side comparison point |
-| candidate CDW | $2.00$ | $9.6568542495$ | deep positive-side reference |
+| FCI | $0.05$ | $0.2414213562$ | positive-side FCI point |
+| FCI | $0.10$ | $0.4828427125$ | positive-side FCI comparison point |
+| candidate CDW | $0.20$ | $0.9656854249$ | near-side candidate-CDW point |
+| candidate CDW | $0.30$ | $1.4485281374$ | deeper candidate-CDW comparison point |
 
 `AHC`, `FCI`, and `CDW` are working directory labels, not conclusions imposed
 on the data.  In particular, the actual isolated low-energy multiplicity at
@@ -265,10 +297,17 @@ structure_fci_gsd_metrics.csv
 structure_fci_gsd_state_metrics.csv
 ```
 
-The metric sweeps overlay the absolute ground state and the equal-weight fixed
-FCI reference projector.  Dotted vertical guides mark a change of the
-rank-one ground-state symmetry slot.  Separate peak-wavevector figures show
-whether a kink is caused by the `max` operation switching momentum.
+The first three `structure_fci_gsd_*` files store
+$S_{\mathcal F}^{\mathrm{proj}}$ on the allowed grid, dense grid, and as peak
+metrics.  The `state_metrics` file instead retains the three individual
+rank-one results for auditing.  These historical filenames are retained for
+compatibility; “GSD average” in a filename means the normalized-projector
+observable defined in Section 1.
+
+The metric sweeps overlay the absolute ground state and the FCI-manifold
+projector structure factor defined above.  Dotted vertical guides mark a
+change of the rank-one ground-state symmetry slot.  Separate peak-wavevector
+figures show whether a kink is caused by the `max` operation switching momentum.
 
 For the sharp $3\times5$ feature near $-0.25$, the primary result to inspect is
 therefore not another rank-one plot.  It is the difference between those two
@@ -302,8 +341,8 @@ julia --project=. phase_exploration/bin/plot_results.jl --kind all
 Use the following decision table rather than a preset phase name:
 
 | combined observation | interpretation |
-|:--|:--|
-| isolated FCI triplet, smooth projector-averaged $S$, rank-one jump | topological-manifold reordering artifact |
+|:---|:---|
+| isolated FCI triplet, smooth $S_{\mathcal F}^{\mathrm{proj}}$, rank-one jump | topological-manifold reordering artifact |
 | closing neutral mode at fixed $\mathbf Q$, growing $S(\mathbf Q)/N_s$, smooth finite-size curves | consistent with a continuous roton-driven ordering transition |
 | discontinuous projector observables and an inter-sector ground-manifold crossing that sharpens with size | first-order transition candidate |
 | common $\mathbf Q$, translation tower, nonzero extrapolated $S(\mathbf Q)/N_s$ | charge-ordered phase |

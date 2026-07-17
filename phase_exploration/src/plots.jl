@@ -191,7 +191,7 @@ function draw_metric_axis!(ax, sample, field; color=:royalblue3,
         sweep_metric_series(sample, field; ensemble=:fci_gsd) : Tuple{Float64,Float64}[]
     if !isempty(averaged)
         lines!(ax, first.(averaged), last.(averaged); color=color, linewidth=2.2,
-            label="equal-weight FCI reference projector")
+            label="FCI-manifold projector")
         scatter!(ax, first.(averaged), last.(averaged); color=color, markersize=7)
     end
     switches = sweep_ground_state_switches(sample)
@@ -214,7 +214,7 @@ function draw_peak_wavevector_axis!(ax, sample, component::Symbol)
     end
     if !isempty(averaged)
         lines!(ax, first.(averaged), last.(averaged); color=:royalblue3,
-            linewidth=2.0, label="FCI reference projector")
+            linewidth=2.0, label="FCI-manifold projector")
         scatter!(ax, first.(averaged), last.(averaged); color=:royalblue3, markersize=7)
     end
     switches = sweep_ground_state_switches(sample)
@@ -440,7 +440,7 @@ function plot_structure_factor_results(; samples=STUDY_GEOMETRIES)
                     "structure_metrics.csv", "", "absolute ground state"),
                 (:fci_gsd, "structure_fci_gsd_allowed.csv", "structure_fci_gsd_dense.csv",
                     "structure_fci_gsd_metrics.csv", "_fci_gsd_average",
-                    "equal-weight FCI reference projector"),
+                    "FCI-manifold projector structure factor"),
             ]
                 allowed_path = joinpath(point, allowed_name)
                 dense_path = joinpath(point, dense_name)
@@ -517,6 +517,13 @@ function diagnostic_tpp(datadir)
     return nothing
 end
 
+function charge_pump_point_is_active(phase::Symbol, tpp)
+    phase == :CDW || return true
+    tpp === nothing && return false
+    return any(value -> isapprox(tpp, value; atol=1e-10, rtol=0.0),
+        characteristic_tpp_values(phase))
+end
+
 function existing_diagnostic_points(phase, sample::Tuple{Int,Int})
     root = joinpath(RESULT_ROOT, "diagnostics", String(phase), geometry_tag(sample))
     isdir(root) || return String[]
@@ -581,7 +588,7 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
             for (row_index, row_title, allowed_values, dense_x, dense_y, dense_values) in [
                 (1, "absolute ground state", ground_sq,
                     ground_kx, ground_ky, ground_dense),
-                (2, "equal-weight selected manifold", manifold_sq,
+                (2, "selected-manifold projector", manifold_sq,
                     manifold_kx, manifold_ky, manifold_dense),
             ]
                 ax_allowed = Axis(fig_sf[row_index, 1]; xlabel="qₓ", ylabel="qᵧ",
@@ -754,7 +761,7 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
         end
 
         pump_path = joinpath(datadir, "charge_pump.csv")
-        if isfile(pump_path)
+        if isfile(pump_path) && charge_pump_point_is_active(phase_symbol, tpp)
             rows = read_simple_csv(pump_path)
             groups = group_rows(rows, (:branch,))
             fig = Figure(size=(760, 520))

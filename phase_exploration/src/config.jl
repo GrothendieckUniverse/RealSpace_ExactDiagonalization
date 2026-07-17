@@ -41,8 +41,8 @@ const PHASE_SPECS = Dict{Symbol,PhaseSpec}(
 # working label until the positive-side order has been established.
 const CHARACTERISTIC_TPP_VALUES = Dict{Symbol,Vector{Float64}}(
     :AHC => [-0.50, -0.45],
-    :FCI => [-0.30, -0.15, 0.00],
-    :CDW => [0.05, 0.10, 2.00],
+    :FCI => [-0.30, -0.15, 0.00, 0.05, 0.10],
+    :CDW => [0.20, 0.30],
 )
 
 # The symmetry slots that form the already-established FCI manifold at its
