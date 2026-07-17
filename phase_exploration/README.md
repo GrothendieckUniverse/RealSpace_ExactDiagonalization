@@ -18,20 +18,20 @@ readable filenames.
 
 Edit [`src/config.jl`](src/config.jl) before a production campaign. It contains
 the model parameters, geometries, 0.1-spaced numerator sweep, solver policy,
-and the common diagnostic/scaling points:
+and the characteristic diagnostic/scaling points (all entries are physical
+`t''` values):
 
-| phase | numerator `x` | physical `t''` | default manifold |
-|:--|--:|--:|--:|
-| AHC | `-0.54(2+2sqrt(2))` | `-0.54` | three lowest eigenstates |
-| FCI | `-1.0` | `-0.2071067812` | three lowest eigenstates |
-| candidate CDW | `0.21(2+2sqrt(2))` | `0.21` | three lowest eigenstates |
+| working phase label | physical `t''` values | selected manifold |
+|:--|:--|:--|
+| AHC | `-0.50, -0.45` | three lowest eigenstates |
+| FCI | `-0.30, -0.15, 0.00` | three lowest eigenstates |
+| candidate CDW | `0.05, 0.10, 2.00` | three lowest eigenstates |
 
-The AHC and positive-side points were deliberately moved closer to the FCI,
-where the same phase is more likely to be sampled on all finite geometries.
 The `CDW` key and output directory are retained for compatibility, but the
-positive-side phase is not assumed to be a CDW.  Its identity, the distinction
-between charge and neutral gaps, and the fixed-FCI-manifold tracking convention
-are developed in [`competing_phase_diagnostics.md`](competing_phase_diagnostics.md).
+positive-side phase is not assumed to be a CDW. The structure-factor puzzles,
+the rank-one versus FCI-projector comparison, and the conditions for a valid
+charge pump are developed in
+[`competing_phase_diagnostics.md`](competing_phase_diagnostics.md).
 Diagnostic and charge-gap checkpoints live in parameter-specific
 `x_<numerator>` directories.  Loading still validates the model, filling, and
 flux; `--refresh true` rebuilds stale derived CSVs while resuming compatible
@@ -47,8 +47,10 @@ thread, which exhausts memory on this geometry. CLI `--mode matrix` or
 
 ## Local jobs
 
-One sweep point produces the ranked all-sector spectrum, allowed-momentum
-`S(q)`, a dense 101x101 `S(q)` grid, and the two requested metrics:
+One sweep point produces the ranked all-sector spectrum and two versions of
+the connected structure factor: the absolute ground state and the equal-weight
+projector over the three fixed FCI reference slots. Each version has an
+allowed-momentum grid, a dense 101x101 map, and peak metrics:
 
 ```bash
 julia --project=. phase_exploration/bin/run_sweep_point.jl \
@@ -60,26 +62,28 @@ The normalized metric is evaluated literally as
 `max(abs(S(q))) / mean(abs(S(q)))` column is also saved, but is not substituted
 for the requested plot.
 
-Run a common deep-phase diagnostic point with:
+Run one characteristic diagnostic point with the physical hopping explicitly:
 
 ```bash
 julia --project=. phase_exploration/bin/run_diagnostic_point.jl \
-  --phase FCI --geometry 3x5
+  --phase FCI --geometry 3x5 --tpp -0.15
 ```
 
 This performs a zero-flux all-sector scan, chooses the configured number of
 globally lowest eigenstates (retaining both momentum sector and in-sector
 level), and generates:
 
-- all-momentum-sector spectrum flow over three flux quanta (61 points,
-  i.e. 20 intervals per flux quantum);
+- absolute-ground-state and equal-weight selected-manifold `S(q)` maps and
+  metrics;
+- all-momentum-sector spectrum flow over one flux quantum (21 points,
+  i.e. 20 intervals, on the same grid as the charge pump);
 - the manifold charge pump over one flux quantum;
 - a spatial/orbital cut ES for the absolute ground state;
 - the Li-Haldane/Regnault-Bernevig momentum-resolved particle ES of the
   selected low-energy manifold (`N_A=2` by default).
 
 Individual diagnostics can be split across jobs, for example
-`--observables flow,pump` or `--observables spatial_es,pes`. Flux and zero-flux
+`--observables structure,flow,pump` or `--observables spatial_es,pes`. Flux and zero-flux
 checkpoints are shared and resumed sector by sector. Use `--refresh true` to
 rebuild derived CSVs while retaining compatible checkpoints; `--overwrite
 true` also recomputes the checkpoints.
@@ -93,12 +97,11 @@ See [`entanglement_counting_notes.md`](entanglement_counting_notes.md) for the
 `(1,3)` PES derivation, geometry-by-geometry counting, and an explanation of
 what the current spatial ES can and cannot establish.
 
-The sweep plotter also writes `zero_flux_gap_diagnostics_<geometry>.svg`.  Its
-left panel separates the ground-referenced neutral excitation `E4-E1`, the
-instantaneous three-state isolation `E4-E3`, and the width `E3-E1`.  Its right
-panel follows the fixed FCI reference states—including levels 1--3 of `(0,3)`
-on `3x6`—and shows their signed isolation from all other states, their
-same-sector direct gap, and their internal width.
+The sweep plotter also writes `zero_flux_gap_diagnostics_<geometry>.svg` as a
+single-axis plot with only two global-energy differences, using
+$E_0\leq E_1\leq E_2\leq E_3\leq\cdots$: $E_2-E_0$ is the three-state FCI
+manifold width and $E_3-E_2$ is the roton gap.  No additional isolation or
+same-sector-gap curves are mixed into this figure.
 
 For the corrected `3x6` FCI run, the three manifold states are levels 1--3
 of the same momentum sector `(0,3)`.  The momentum-resolved particle PES uses
@@ -113,7 +116,7 @@ One finite-size charge-gap datum is:
 
 ```bash
 julia --project=. phase_exploration/bin/run_charge_gap_point.jl \
-  --phase FCI --geometry 3x5
+  --phase FCI --geometry 3x5 --tpp -0.15
 ```
 
 As for diagnostics, use `--refresh true` to replace the result CSV while
@@ -147,18 +150,33 @@ Other plot kinds are `sweep`, `ed-spectra`, `structure`, `diagnostics`, and
 `charge-gap`. The `ed-spectra` renderer loops over every available sweep point
 and recreates its zero-twist, symmetry-resolved ED spectrum in the same style
 as the package's `plot_spectrum`, grouped by geometry. The sweep renderer
-creates separate spectrum-rank, `max|S|`, and normalized `max|S/mean(S)|`
-figures for every geometry plus multi-geometry panels. In the spectrum-rank
-sweeps, line color identifies the instantaneous energy rank and marker shape
-identifies that level's momentum sector; both keys are placed in an external
-legend because a rank can change sector at a crossing. Each sweep point gets a
+creates separate spectrum, `max|S|`, normalized `max|S/mean(S)|`, and peak
+wavevector figures for every geometry plus multi-geometry panels. The two
+metric curves compare the absolute ground state with the equal-weight fixed
+FCI reference projector; dotted guides mark changes of the rank-one ground
+state. The spectrum sweeps plot the
+lowest 20 global levels by default and use one
+default circular marker, with lines connecting the same momentum-sector and
+in-sector-level state across adjacent sweep points. All states are dark gray
+except the three fixed FCI reference states: level 1 in three sectors on 3x4
+and 3x5, and levels 1--3 of `(0,3)` on 3x6. Those three states remain plotted
+even when competing levels push them above the usual rank cutoff. This makes
+gray roton levels that cross into the FCI manifold directly visible. Each sweep point gets a
 two-panel finite-grid/dense-grid 2D structure-factor map. Diagnostic charge-pump
 and spectrum-flow legends identify their momentum sectors; the accompanying
-manifold-gap plot tests the pump's spectral-isolation prerequisite. Spectrum-flow plots
-follow the ten states that are lowest at zero flux (configurable with
-`--max-flow-curves`, up to ten), using ten distinct colors and an external
-legend so neither colors nor labels obscure the levels. The complete all-sector
-flow remains available in the CSV.
+manifold-gap plot tests the pump's spectral-isolation prerequisite. Spectrum-flow
+plots follow the twenty states that are lowest at zero flux (configurable with
+`--max-flow-curves`). Every state in the focused manifold uses a black connecting
+line and colored scatter points; every other curve is dark gray. Thus the 3x4
+and 3x5 FCI manifolds highlight level 1 in three different sectors, whereas the
+3x6 FCI manifold highlights levels 1--3 in its common sector. Spectrum-flow
+markers are enlarged for visibility. If the focused trajectories remain directly
+separated from every other plotted level throughout
+the flux cycle, the vertical scale is 1.5 times their combined energy span plus
+the minimum direct flow gap. If that separation closes, the scale is twice the
+focused span. The lower limit is minus 5% of this scale so zero-energy branches
+remain clearly visible. The complete
+all-sector flow remains available in the CSV.
 
 ## Output layout
 
@@ -166,8 +184,8 @@ flow remains available in the CSV.
 phase_exploration/
   results/
     sweep/<L1xL2>/x_<numerator>/
-    diagnostics/<AHC|FCI|CDW>/<L1xL2>/
-    charge_gap/<AHC|FCI|CDW>/<L1xL2>/
+    diagnostics/<AHC|FCI|CDW>/<L1xL2>/tpp_<physical-value>/
+    charge_gap/<AHC|FCI|CDW>/<L1xL2>/tpp_<physical-value>/
   figures/
     sweep/
     ed_spectra/<L1xL2>/
@@ -196,9 +214,9 @@ bash phase_exploration/hpc/hyak_slurm_gen.sh
 ```
 
 This writes one `.sbatch` file per `(geometry, t'')` sweep point, plus diagnostic
-and charge-gap jobs for the two competing phases AHC and candidate CDW.  The
-confirmed FCI is not rerun.  The accompanying `data_jobs.txt` is the exact
-submission manifest. Review the collection, then queue everything with:
+and charge-gap jobs for all eight configured AHC, FCI, and candidate-CDW
+characteristic points. The accompanying `data_jobs.txt` is the exact submission
+manifest. Review the collection, then queue everything with:
 
 ```bash
 phase_exploration/hpc/generated/submit_all.sh
@@ -253,7 +271,8 @@ sacct -j JOB_ID --format=JobID,JobName,State,ExitCode,Elapsed,MaxRSS,ReqMem
 ls phase_exploration/hpc/logs/
 ```
 
-The generated diagnostic jobs use a versioned protocol marker. This forces the
-corrected `(sector, level)` manifold selection and denser flow output to run
-once even when older CSVs already exist; subsequent submissions skip the
-versioned completed result normally.
+The generated diagnostic jobs use a versioned protocol marker and
+parameter-specific result directory. This forces the new ground-versus-manifold
+structure output, corrected `(sector, level)` selection, and four-level-per-
+sector flow data to run once; subsequent submissions skip a fully completed
+point normally.

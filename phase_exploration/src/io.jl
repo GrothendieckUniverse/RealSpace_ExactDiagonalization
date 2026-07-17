@@ -135,6 +135,46 @@ function write_sf_metrics_csv(path, metrics, sample, x, ground_sector)
     return path
 end
 
+function write_manifold_sf_metrics_csv(path, metrics, sample, x, manifold_states;
+    selection::AbstractString)
+    ensure_parent(path)
+    state_text = join(["$(state.sector[1]):$(state.sector[2]):$(state.level)"
+                       for state in manifold_states], ';')
+    open(path, "w") do io
+        println(io, "L1,L2,n_sites,n_particles,tpp_numerator,tpp_actual,selection,manifold_size,manifold_states,peak_qx,peak_qy,max_abs_S,mean_S,mean_abs_S,max_abs_S_over_mean_S,max_abs_S_over_mean_abs_S")
+        @printf(io, "%d,%d,%d,%d,%.16g,%.16g,%s,%d,%s,%.16g,%.16g,%.16g,%.16g,%.16g,%.16g,%.16g\n",
+            sample[1], sample[2], 2 * prod(sample), default_particle_number(sample),
+            x, actual_tpp(x), selection, length(manifold_states), state_text,
+            metrics.peak_q[1], metrics.peak_q[2], metrics.max_abs_S,
+            metrics.mean_S, metrics.mean_abs_S, metrics.max_abs_S_over_mean_S,
+            metrics.max_abs_S_over_mean_abs_S)
+    end
+    return path
+end
+
+function write_sf_state_metrics_csv(path, rows, sample, x; selection::AbstractString)
+    ensure_parent(path)
+    open(path, "w") do io
+        println(io, "L1,L2,tpp_numerator,tpp_actual,selection,k1,k2,level,energy,energy_minus_E0,global_rank,peak_qx,peak_qy,max_abs_S,mean_S,mean_abs_S,max_abs_S_over_mean_S,max_abs_S_over_mean_abs_S")
+        for row in rows
+            metrics = row.metrics
+            @printf(io, "%d,%d,%.16g,%.16g,%s,%d,%d,%d,%.16g,%.16g,%d,%.16g,%.16g,%.16g,%.16g,%.16g,%.16g,%.16g\n",
+                sample[1], sample[2], x, actual_tpp(x), selection,
+                row.state.sector[1], row.state.sector[2], row.state.level,
+                row.state.energy, row.state.shifted, row.rank,
+                metrics.peak_q[1], metrics.peak_q[2], metrics.max_abs_S,
+                metrics.mean_S, metrics.mean_abs_S,
+                metrics.max_abs_S_over_mean_S, metrics.max_abs_S_over_mean_abs_S)
+        end
+    end
+    return path
+end
+
 function result_point_dir(kind::AbstractString, sample::Tuple{Int,Int}, x::Real)
     return joinpath(RESULT_ROOT, kind, geometry_tag(sample), "x_$(tpp_tag(x))")
+end
+
+
+function phase_result_point_dir(kind::AbstractString, phase, sample::Tuple{Int,Int}, x::Real)
+    return joinpath(RESULT_ROOT, kind, String(phase), geometry_tag(sample), phase_point_tag(x))
 end

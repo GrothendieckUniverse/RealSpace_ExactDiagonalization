@@ -25,18 +25,24 @@ const CHARGE_GAP_GEOMETRIES = [(3, 3), (3, 4), (3, 5), (3, 6), (3, 7)]
 
 struct PhaseSpec
     name::Symbol
-    numerator::Float64
     manifold_size::Int
 end
 
-# Common diagnostic points for the two phases competing with the confirmed FCI.
-# AHC and CDW retain their historical output-directory names, but the positive-
-# t'' point is only a candidate CDW until its order and low-energy manifold pass
-# the finite-size tests described in competing_phase_diagnostics.md.
+# Phase labels carry only metadata.  There is deliberately no single default
+# parameter for a phase: the characteristic-point campaign compares several
+# physical t'' values on each side of the suspected transitions.
 const PHASE_SPECS = Dict{Symbol,PhaseSpec}(
-    :AHC => PhaseSpec(:AHC, -0.54 * TPP_DENOMINATOR, 3),
-    :FCI => PhaseSpec(:FCI, -1.0, 3),
-    :CDW => PhaseSpec(:CDW, 0.21 * TPP_DENOMINATOR, 3),
+    :AHC => PhaseSpec(:AHC, 3),
+    :FCI => PhaseSpec(:FCI, 3),
+    :CDW => PhaseSpec(:CDW, 3),
+)
+
+# Physical t'' values, not numerator values.  `CDW` remains a historical
+# working label until the positive-side order has been established.
+const CHARACTERISTIC_TPP_VALUES = Dict{Symbol,Vector{Float64}}(
+    :AHC => [-0.50, -0.45],
+    :FCI => [-0.30, -0.15, 0.00],
+    :CDW => [0.05, 0.10, 2.00],
 )
 
 # The symmetry slots that form the already-established FCI manifold at its
@@ -51,14 +57,29 @@ const FCI_REFERENCE_MANIFOLD = Dict{Tuple{Int,Int},Vector{Tuple{Tuple{Int,Int},I
 )
 
 actual_tpp(x::Real) = Float64(x) / TPP_DENOMINATOR
+numerator_at_tpp(tpp::Real) = Float64(tpp) * TPP_DENOMINATOR
 geometry_tag(sample::Tuple{Int,Int}) = "$(sample[1])x$(sample[2])"
 geometry_tag(sample::AbstractVector{<:Integer}) = geometry_tag((Int(sample[1]), Int(sample[2])))
 tpp_tag(x::Real) = replace(@sprintf("%.4f", Float64(x)), "-" => "m", "." => "p")
+phase_point_tag(x::Real) = "tpp_$(tpp_tag(actual_tpp(x)))"
 
 function phase_spec(name)
     key = Symbol(uppercase(String(name)))
     haskey(PHASE_SPECS, key) || error("Unknown phase $name; choose AHC, FCI, or CDW.")
     return PHASE_SPECS[key]
+end
+
+function characteristic_tpp_values(name)
+    spec = phase_spec(name)
+    return copy(CHARACTERISTIC_TPP_VALUES[spec.name])
+end
+
+function require_phase_numerator(name, x::Union{Nothing,Real})
+    x !== nothing && return Float64(x)
+    values = characteristic_tpp_values(name)
+    formatted = join([@sprintf("%.2f", value) for value in values], ", ")
+    error("Phase $(phase_spec(name).name) has multiple characteristic t′′ values " *
+          "($formatted). Supply --tpp (physical value) or --x (numerator).")
 end
 
 "Recommended solver mode by geometry and task."

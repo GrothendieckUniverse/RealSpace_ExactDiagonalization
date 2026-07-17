@@ -8,7 +8,7 @@ Render figures from generated CSV data (no diagonalization is performed).
 Usage:
   julia --project=. phase_exploration/bin/plot_results.jl \\
     [--kind all|sweep|ed-spectra|structure|diagnostics|charge-gap] \\
-    [--geometries '3x4;3x5;3x6'] [--max-ranks 12] [--max-flow-curves 10]
+    [--geometries '3x4;3x5;3x6'] [--max-ranks 20] [--max-flow-curves 20]
 """
 
 opts, _ = parse_cli(ARGS)
@@ -22,8 +22,8 @@ samples = if haskey(opts, "geometries")
 else
     STUDY_GEOMETRIES
 end
-max_ranks = parse(Int, get(opts, "max-ranks", "12"))
-max_flow_curves = parse(Int, get(opts, "max-flow-curves", "10"))
+max_ranks = parse(Int, get(opts, "max-ranks", "20"))
+max_flow_curves = parse(Int, get(opts, "max-flow-curves", "20"))
 
 if kind == "all"
     plot_sweep_results(; samples=samples, max_ranks=max_ranks)

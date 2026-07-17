@@ -18,9 +18,9 @@ function run_charge_gap_point(phase_name, sample::Tuple{Int,Int};
 )
     spec = phase_spec(phase_name)
     phase = String(spec.name)
-    xvalue = isnothing(x) ? spec.numerator : Float64(x)
+    xvalue = require_phase_numerator(phase_name, x)
     n0 = default_particle_number(sample)
-    outdir = joinpath(RESULT_ROOT, "charge_gap", phase, geometry_tag(sample))
+    outdir = phase_result_point_dir("charge_gap", phase, sample, xvalue)
     ckptdir = joinpath(CHECKPOINT_ROOT, "charge_gap", phase, geometry_tag(sample),
         "x_$(tpp_tag(xvalue))")
     summary_path = joinpath(outdir, "charge_gap.csv")

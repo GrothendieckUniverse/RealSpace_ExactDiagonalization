@@ -93,38 +93,51 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     x::Union{Nothing,Real}=nothing,
     manifold_size::Union{Nothing,Int}=nothing,
     mode::Symbol=mode_for(sample, :diagnostics),
-    observables::Vector{Symbol}=[:flow, :pump, :spatial_es, :pes],
+    observables::Vector{Symbol}=[:structure, :flow, :pump, :spatial_es, :pes],
     zero_nev::Int=10,
-    flow_nev::Int=3,
-    flow_flux_values::Vector{Float64}=collect(range(0.0, 3.0; length=61)),
-    pump_flux_values::Vector{Float64}=collect(range(0.0, 1.0; length=17)),
+    flow_nev::Int=4,
+    flow_flux_values::Vector{Float64}=collect(range(0.0, 1.0; length=21)),
+    pump_flux_values::Vector{Float64}=collect(range(0.0, 1.0; length=21)),
     flux_direction::Int=1,
     polarization_direction::Int=2,
     n_particles_a::Int=2,
+    dense_resolution::Int=101,
     refresh::Bool=false,
     overwrite::Bool=false,
 )
-    valid = Set([:flow, :pump, :spatial_es, :pes])
+    valid = Set([:structure, :flow, :pump, :spatial_es, :pes])
     all(obs in valid for obs in observables) || error("Unknown diagnostic in $observables.")
     spec = phase_spec(phase_name)
-    xvalue = isnothing(x) ? spec.numerator : Float64(x)
+    xvalue = require_phase_numerator(phase_name, x)
     nmanifold = isnothing(manifold_size) ? spec.manifold_size : manifold_size
     phase = String(spec.name)
-    outdir = joinpath(RESULT_ROOT, "diagnostics", phase, geometry_tag(sample))
+    outdir = phase_result_point_dir("diagnostics", phase, sample, xvalue)
     checkpoint_point = "x_$(tpp_tag(xvalue))"
     ckpt_zero = joinpath(CHECKPOINT_ROOT, "diagnostics", phase, geometry_tag(sample),
         checkpoint_point, "zero_flux.jld2")
     ckpt_flux = joinpath(CHECKPOINT_ROOT, "diagnostics", phase, geometry_tag(sample),
         checkpoint_point, "flux")
     output_for = Dict(
+        :structure => joinpath(outdir, "structure_manifold_metrics.csv"),
         :flow => joinpath(outdir, "spectrum_flow.csv"),
         :pump => joinpath(outdir, "charge_pump.csv"),
         :spatial_es => joinpath(outdir, "spatial_entanglement_spectrum.csv"),
         :pes => joinpath(outdir, "particle_entanglement_spectrum.csv"),
     )
+    structure_outputs = [
+        joinpath(outdir, "structure_ground_allowed.csv"),
+        joinpath(outdir, "structure_ground_dense.csv"),
+        joinpath(outdir, "structure_ground_metrics.csv"),
+        joinpath(outdir, "structure_manifold_allowed.csv"),
+        joinpath(outdir, "structure_manifold_dense.csv"),
+        joinpath(outdir, "structure_manifold_metrics.csv"),
+        joinpath(outdir, "structure_manifold_state_metrics.csv"),
+    ]
+    observable_complete(obs) = obs == :structure ? all(isfile, structure_outputs) :
+                               isfile(output_for[obs])
     # `refresh` rebuilds derived CSVs while reusing compatible ED checkpoints.
     # `overwrite` additionally discards and recomputes those checkpoints.
-    todo = [obs for obs in observables if refresh || overwrite || !isfile(output_for[obs])]
+    todo = [obs for obs in observables if refresh || overwrite || !observable_complete(obs)]
     if isempty(todo) && isfile(joinpath(outdir, "summary.csv")) &&
        isfile(joinpath(outdir, "zero_flux_spectrum.csv"))
         @info "Requested diagnostics already complete; skipping" phase sample outdir
@@ -140,6 +153,66 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     manifold_nev = maximum(row.level for row in manifold_states)
     all_sectors = all_sector_labels(ed_data)
     write_spectrum_csv(joinpath(outdir, "zero_flux_spectrum.csv"), table, sample, xvalue)
+
+    if :structure in todo
+        ground_state = table[1]
+        qx, qy, ground_allowed = structure_factor_allowed_momenta(
+            model, ground_state.sector;
+            target_eigval_idx=ground_state.level,
+            filling_fraction=filling,
+            ed_mode=mode,
+            ed_data=ed_data)
+        kx, ky, ground_dense = compute_structure_factor_map(
+            model, ground_state.sector;
+            target_eigval_idx=ground_state.level,
+            filling_fraction=filling,
+            k_resolution=dense_resolution,
+            ed_data=ed_data)
+        ground_metrics = sf_metrics(qx, qy, ground_allowed)
+        write_allowed_sf_csv(joinpath(outdir, "structure_ground_allowed.csv"),
+            qx, qy, ground_allowed)
+        write_dense_sf_csv(joinpath(outdir, "structure_ground_dense.csv"),
+            kx, ky, ground_dense)
+        write_sf_metrics_csv(joinpath(outdir, "structure_ground_metrics.csv"),
+            ground_metrics, sample, xvalue, ground_state.sector)
+
+        state_metric_rows = NamedTuple[]
+        for state in manifold_states
+            state_qx, state_qy, state_values = structure_factor_allowed_momenta(
+                model, state.sector;
+                target_eigval_idx=state.level,
+                filling_fraction=filling,
+                ed_mode=mode,
+                ed_data=ed_data)
+            rank = findfirst(row -> (row.sector, row.level) == (state.sector, state.level),
+                table)
+            push!(state_metric_rows, (state=state, rank=rank,
+                metrics=sf_metrics(state_qx, state_qy, state_values)))
+        end
+        write_sf_state_metrics_csv(joinpath(outdir, "structure_manifold_state_metrics.csv"),
+            state_metric_rows, sample, xvalue; selection="global_lowest_manifold")
+
+        manifold_qx, manifold_qy, manifold_allowed =
+            structure_factor_manifold_allowed_momenta(
+                model, manifold_states;
+                filling_fraction=filling,
+                ed_mode=mode,
+                ed_data=ed_data)
+        manifold_kx, manifold_ky, manifold_dense =
+            compute_structure_factor_manifold_average_map(
+                model, manifold_states;
+                filling_fraction=filling,
+                k_resolution=dense_resolution,
+                ed_mode=mode,
+                ed_data=ed_data)
+        manifold_metrics = sf_metrics(manifold_qx, manifold_qy, manifold_allowed)
+        write_allowed_sf_csv(joinpath(outdir, "structure_manifold_allowed.csv"),
+            manifold_qx, manifold_qy, manifold_allowed)
+        write_dense_sf_csv(joinpath(outdir, "structure_manifold_dense.csv"),
+            manifold_kx, manifold_ky, manifold_dense)
+        write_manifold_sf_metrics_csv(output_for[:structure], manifold_metrics,
+            sample, xvalue, manifold_states; selection="global_lowest_manifold")
+    end
 
     union_flux = sort(unique(vcat(
         (:flow in todo ? flow_flux_values : Float64[]),

@@ -48,6 +48,8 @@ function _build_density_correlation_matrix!(
     flavor_a::Function,
     flavor_b::Function,
     particle_statistics::Particle_Statistics,
+    ;
+    subtract_disconnected::Bool=true,
 )
     fill!(C, 0.0)
     fill!(density_a, 0.0)
@@ -102,8 +104,10 @@ function _build_density_correlation_matrix!(
     end
 
     # ── Subtract disconnected part: ⟨n_i n_j⟩_c = ⟨n_i n_j⟩ − ⟨n_i⟩⟨n_j⟩ ──
-    @inbounds for j in 1:n_site, i in 1:n_site
-        C[i, j] -= density_a[i] * density_b[j]
+    if subtract_disconnected
+        @inbounds for j in 1:n_site, i in 1:n_site
+            C[i, j] -= density_a[i] * density_b[j]
+        end
     end
     return C
 end
@@ -364,6 +368,123 @@ function static_structure_factor(
     return kgrid.site_cart_list, S_q
 end
 
+function _manifold_state_components(state)
+    if hasproperty(state, :sector) && hasproperty(state, :level)
+        return (Tuple(Int.(getproperty(state, :sector))), Int(getproperty(state, :level)))
+    elseif state isa Tuple && length(state) == 2
+        return (Tuple(Int.(state[1])), Int(state[2]))
+    end
+    error("A manifold state must provide `(sector, level)`; got $(repr(state)).")
+end
+
+"Build the connected density correlator of an incoherent manifold projector."
+function _manifold_connected_density_correlation(
+    model::Real_Space_Second_Quantized_Model,
+    manifold_states::AbstractVector;
+    weights::Union{Nothing,AbstractVector{<:Real}}=nothing,
+    filling_fraction::Rational{Int},
+    flavor_a::Function=i -> true,
+    flavor_b::Function=i -> true,
+    ed_mode::Symbol=:matrix,
+    ed_data::Union{Symmetry_Resolved_ED_Data,Nothing}=nothing,
+)
+    isempty(manifold_states) && error("The manifold-state list must not be empty.")
+    normalized_weights = if weights === nothing
+        fill(1.0 / length(manifold_states), length(manifold_states))
+    else
+        length(weights) == length(manifold_states) || error(
+            "Received $(length(weights)) weights for $(length(manifold_states)) states.")
+        any(weight -> weight < 0, weights) && error("Manifold weights must be nonnegative.")
+        total = sum(weights)
+        total > 0 || error("At least one manifold weight must be positive.")
+        Float64.(weights) ./ total
+    end
+
+    n_site = model.lattice.n_site
+    C = zeros(Float64, n_site, n_site)
+    density_a = zeros(Float64, n_site)
+    density_b = zeros(Float64, n_site)
+    C_state = similar(C)
+    density_a_state = similar(density_a)
+    density_b_state = similar(density_b)
+
+    for (state, weight) in zip(manifold_states, normalized_weights)
+        sector, level = _manifold_state_components(state)
+        _, basis, vector = _bootstrap_ed_sector(
+            model, sector, filling_fraction, level, ed_mode, ed_data)
+        _build_density_correlation_matrix!(
+            C_state, density_a_state, density_b_state, vector, basis, n_site,
+            flavor_a, flavor_b, model.particle_statistics;
+            subtract_disconnected=false)
+        C .+= weight .* C_state
+        density_a .+= weight .* density_a_state
+        density_b .+= weight .* density_b_state
+    end
+
+    # This is the connected correlator of rho = sum_a w_a |psi_a><psi_a|.
+    # Subtracting after the average is important when the component states have
+    # slightly different one-body densities.
+    C .-= density_a * transpose(density_b)
+    return C
+end
+
+"""
+    static_structure_factor_manifold_average(model, manifold_states; kwargs...)
+
+Compute connected `S(q)` for the normalized incoherent projector over the
+specified `(sector, level)` eigenstates.  With equal default weights this is
+basis independent inside a complete degenerate manifold and does not jump when
+its members merely exchange energy rank.
+"""
+function static_structure_factor_manifold_average(
+    model::Real_Space_Second_Quantized_Model,
+    manifold_states::AbstractVector;
+    weights::Union{Nothing,AbstractVector{<:Real}}=nothing,
+    filling_fraction::Rational{Int},
+    flavor_a::Function=i -> true,
+    flavor_b::Function=i -> true,
+    ed_mode::Symbol=:matrix,
+    ed_data::Union{Symmetry_Resolved_ED_Data,Nothing}=nothing,
+)
+    C = _manifold_connected_density_correlation(
+        model, manifold_states;
+        weights=weights,
+        filling_fraction=filling_fraction,
+        flavor_a=flavor_a,
+        flavor_b=flavor_b,
+        ed_mode=ed_mode,
+        ed_data=ed_data)
+    kgrid = TightBinding.initialize_uniform_grids(model.lattice)
+    phases = _precompute_phases(kgrid, model.lattice.site_cart_list)
+    S_q = zeros(Float64, kgrid.nsite)
+    _fourier_transform!(S_q, phases, C, model.lattice.n_site)
+    return kgrid.site_cart_list, S_q
+end
+
+function structure_factor_manifold_allowed_momenta(
+    model::Real_Space_Second_Quantized_Model,
+    manifold_states::AbstractVector;
+    weights::Union{Nothing,AbstractVector{<:Real}}=nothing,
+    filling_fraction::Rational{Int},
+    flavor_a::Function=i -> true,
+    flavor_b::Function=i -> true,
+    ed_mode::Symbol=:matrix,
+    ed_data::Union{Symmetry_Resolved_ED_Data,Nothing}=nothing,
+    fold_to_first_bz::Bool=true,
+)
+    q_points, S_q = static_structure_factor_manifold_average(
+        model, manifold_states;
+        weights=weights,
+        filling_fraction=filling_fraction,
+        flavor_a=flavor_a,
+        flavor_b=flavor_b,
+        ed_mode=ed_mode,
+        ed_data=ed_data)
+    plot_points = fold_to_first_bz ?
+                  _fold_momenta_to_first_bz(q_points, model.lattice) : q_points
+    return [q[1] for q in plot_points], [q[2] for q in plot_points], S_q
+end
+
 """
     structure_factor_allowed_momenta(model, sector_label; kwargs...)
         -> (qx::Vector{Float64}, qy::Vector{Float64}, S_q::Vector{Float64})
@@ -461,6 +582,35 @@ function compute_structure_factor_map(
     S_map = reshape(S_flat, k_resolution, k_resolution)
 
     return kx, ky, S_map
+end
+
+function compute_structure_factor_manifold_average_map(
+    model::Real_Space_Second_Quantized_Model,
+    manifold_states::AbstractVector;
+    weights::Union{Nothing,AbstractVector{<:Real}}=nothing,
+    filling_fraction::Rational{Int},
+    flavor_a::Function=i -> true,
+    flavor_b::Function=i -> true,
+    k_resolution::Int=61,
+    ed_mode::Symbol=:matrix,
+    ed_data::Union{Symmetry_Resolved_ED_Data,Nothing}=nothing,
+)
+    C = _manifold_connected_density_correlation(
+        model, manifold_states;
+        weights=weights,
+        filling_fraction=filling_fraction,
+        flavor_a=flavor_a,
+        flavor_b=flavor_b,
+        ed_mode=ed_mode,
+        ed_data=ed_data)
+    span = 3π
+    kx = collect(range(-span / 2, span / 2; length=k_resolution))
+    ky = collect(range(-span / 2, span / 2; length=k_resolution))
+    q_points = [[x, y] for y in ky for x in kx]
+    phases = _precompute_phases(q_points, model.lattice.site_cart_list)
+    S_flat = zeros(Float64, length(q_points))
+    _fourier_transform!(S_flat, phases, C, model.lattice.n_site)
+    return kx, ky, reshape(S_flat, k_resolution, k_resolution)
 end
 
 """

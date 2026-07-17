@@ -36,15 +36,26 @@ SWEEP_NUMERATORS=(
    0.0  0.1  0.2  0.3  0.4  0.5  0.6  0.7  0.8  0.9
    1.0  1.1  1.2  1.3  1.4  1.5
 )
-# The FCI campaign is complete.  Production diagnostics now target only its
-# two neighboring competitors, using the common points in src/config.jl.
-COMPETING_PHASES=(AHC CDW)
+# Each entry is `working_phase_label|physical_tpp`.  The result path contains
+# the physical value, so none of these independent points overwrites another.
+CHARACTERISTIC_POINTS=(
+  "AHC|-0.50"
+  "AHC|-0.45"
+  "FCI|-0.30"
+  "FCI|-0.15"
+  "FCI|0.00"
+  "CDW|0.05"
+  "CDW|0.10"
+  "CDW|2.00"
+)
 SWEEP_GEOMETRIES=(3x4 3x5 3x6)
 DIAGNOSTIC_GEOMETRIES=(3x4 3x5 3x6)
 GAP_GEOMETRIES=(3x3 3x4 3x5 3x6 3x7)
-FLOW_STEPS=61
-DIAGNOSTIC_PROTOCOL="competing_points_v5_tpp_m0p54_p0p21_flow${FLOW_STEPS}"
-GAP_PROTOCOL="competing_points_v4_tpp_m0p54_p0p21"
+FLOW_CYCLES=1
+FLOW_STEPS=21
+PUMP_STEPS=21
+DIAGNOSTIC_PROTOCOL="characteristic_points_v7_structure_flow${FLOW_STEPS}_pump${PUMP_STEPS}"
+GAP_PROTOCOL="characteristic_points_v5"
 
 GENERATED_DIR="${SCRIPT_DIR}/generated"
 HYAK_LOG_DIR="${REPO_DIR}/phase_exploration/hpc/logs"
@@ -230,6 +241,10 @@ for geometry in "${SWEEP_GEOMETRIES[@]}"; do
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_allowed.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_dense.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_metrics.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_fci_gsd_allowed.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_fci_gsd_dense.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_fci_gsd_metrics.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_fci_gsd_state_metrics.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/run_metadata.csv
 "${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
   "${REPO_DIR}/phase_exploration/bin/run_slurm_job.jl" \
@@ -244,27 +259,40 @@ done
 
 for geometry in "${DIAGNOSTIC_GEOMETRIES[@]}"; do
   resource_for diagnostics "${geometry}"
-  for phase in "${COMPETING_PHASES[@]}"; do
+  for point in "${CHARACTERISTIC_POINTS[@]}"; do
+    IFS='|' read -r phase tpp <<< "${point}"
     phase_lower="${phase,,}"
-    job="${GENERATED_DIR}/diagnostics_${geometry}_${phase_lower}.sbatch"
-    write_header "${job}" "tpp_dx5_${geometry}_${phase_lower}"
+    point_tag="$(value_tag "${tpp}")"
+    result_point_tag="tpp_$(result_value_tag "${tpp}")"
+    result_dir="${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/${result_point_tag}"
+    job="${GENERATED_DIR}/diagnostics_${geometry}_${phase_lower}_tpp_${point_tag}.sbatch"
+    write_header "${job}" "tpp_dx7_${geometry}_${phase_lower}_${point_tag}"
     cat >> "${job}" <<EOF
-# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/${DIAGNOSTIC_PROTOCOL}.done
-# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/zero_flux_spectrum.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/spectrum_flow.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/charge_pump.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/spatial_entanglement_spectrum.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/particle_entanglement_spectrum.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/summary.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/${DIAGNOSTIC_PROTOCOL}.done
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/zero_flux_spectrum.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_ground_allowed.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_ground_dense.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_ground_metrics.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_manifold_allowed.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_manifold_dense.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_manifold_metrics.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_manifold_state_metrics.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/spectrum_flow.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/charge_pump.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/spatial_entanglement_spectrum.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/particle_entanglement_spectrum.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/summary.csv
 "${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
   "${REPO_DIR}/phase_exploration/bin/run_slurm_job.jl" \
   "${REPO_DIR}/phase_exploration/bin/run_diagnostic_point.jl" \
-  --phase "${phase}" --geometry "${geometry}" --mode "${MODE}" \
-  --observables flow,pump,spatial_es,pes --zero-nev 10 --flow-nev 3 \
-  --flow-steps "${FLOW_STEPS}" --pump-steps 17 --pes-na 2 --refresh true
-printf 'protocol=%s\nflow_steps=%s\nmanifold_selection=%s\n' \
-  "${DIAGNOSTIC_PROTOCOL}" "${FLOW_STEPS}" "global_lowest_states_with_sector_levels" \
-  > "${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/${DIAGNOSTIC_PROTOCOL}.done"
+  --phase "${phase}" --geometry "${geometry}" --tpp "${tpp}" --mode "${MODE}" \
+  --observables structure,flow,pump,spatial_es,pes --zero-nev 10 --flow-nev 4 \
+  --flow-cycles "${FLOW_CYCLES}" --flow-steps "${FLOW_STEPS}" \
+  --pump-steps "${PUMP_STEPS}" --pes-na 2 --dense-resolution 101 --refresh true
+printf 'protocol=%s\ntpp=%s\nflow_cycles=%s\nflow_steps=%s\npump_steps=%s\nmanifold_selection=%s\n' \
+  "${DIAGNOSTIC_PROTOCOL}" "${tpp}" "${FLOW_CYCLES}" "${FLOW_STEPS}" "${PUMP_STEPS}" \
+  "global_lowest_states_with_sector_levels" \
+  > "${result_dir}/${DIAGNOSTIC_PROTOCOL}.done"
 mark_complete
 EOF
     printf '%s\n' "$(basename "${job}")" >> "${DATA_MANIFEST}"
@@ -273,21 +301,25 @@ done
 
 for geometry in "${GAP_GEOMETRIES[@]}"; do
   resource_for charge_gap "${geometry}"
-  for phase in "${COMPETING_PHASES[@]}"; do
+  for point in "${CHARACTERISTIC_POINTS[@]}"; do
+    IFS='|' read -r phase tpp <<< "${point}"
     phase_lower="${phase,,}"
-    job="${GENERATED_DIR}/charge_gap_${geometry}_${phase_lower}.sbatch"
-    write_header "${job}" "tpp_cg4_${geometry}_${phase_lower}"
+    point_tag="$(value_tag "${tpp}")"
+    result_point_tag="tpp_$(result_value_tag "${tpp}")"
+    result_dir="${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/${result_point_tag}"
+    job="${GENERATED_DIR}/charge_gap_${geometry}_${phase_lower}_tpp_${point_tag}.sbatch"
+    write_header "${job}" "tpp_cg5_${geometry}_${phase_lower}_${point_tag}"
     cat >> "${job}" <<EOF
-# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/${GAP_PROTOCOL}.done
-# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/charge_gap.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/${GAP_PROTOCOL}.done
+# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/charge_gap.csv
 "${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
   "${REPO_DIR}/phase_exploration/bin/run_slurm_job.jl" \
   "${REPO_DIR}/phase_exploration/bin/run_charge_gap_point.jl" \
-  --phase "${phase}" --geometry "${geometry}" --mode "${MODE}" --nev 2 \
+  --phase "${phase}" --geometry "${geometry}" --tpp "${tpp}" --mode "${MODE}" --nev 2 \
   --refresh true
-printf 'protocol=%s\nparameter_source=%s\n' \
-  "${GAP_PROTOCOL}" "src/config.jl:PHASE_SPECS" \
-  > "${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/${GAP_PROTOCOL}.done"
+printf 'protocol=%s\ntpp=%s\nparameter_source=%s\n' \
+  "${GAP_PROTOCOL}" "${tpp}" "src/config.jl:CHARACTERISTIC_TPP_VALUES" \
+  > "${result_dir}/${GAP_PROTOCOL}.done"
 mark_complete
 EOF
     printf '%s\n' "$(basename "${job}")" >> "${DATA_MANIFEST}"
