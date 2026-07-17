@@ -4,12 +4,12 @@ include(joinpath(@__DIR__, "_bootstrap.jl"))
 
 const HELP = """
 Generate phase diagnostics (structure factor, all-sector flow, charge pump,
-spatial ES, and PES).
+and FCI particle entanglement spectrum).
 
 Usage:
   julia --project=. phase_exploration/bin/run_diagnostic_point.jl \\
     --phase FCI --geometry 3x5 (--tpp -0.15 | --x -0.724264...) \\
-    [--mode auto] [--observables structure,flow,pump,spatial_es,pes] \\
+    [--mode auto] [--observables structure,flow,pump[,pes]] \\
     [--manifold-size 3] [--zero-nev 10] [--flow-nev 4] [--flow-cycles 1] \\
     [--flow-steps 21] [--pump-steps 21] \\
     [--pes-na 2] [--dense-resolution 101] \\
@@ -40,7 +40,9 @@ end
 manifold_size = haskey(opts, "manifold-size") ? parse(Int, opts["manifold-size"]) : nothing
 mode = get(opts, "mode", "auto") == "auto" ? mode_for(sample, :diagnostics) :
        CheckerboardPhaseStudy.parse_mode(opts["mode"])
-observables = Symbol.(lowercase.(strip.(split(get(opts, "observables", "structure,flow,pump,spatial_es,pes"), ','))))
+observables = haskey(opts, "observables") ?
+    Symbol.(lowercase.(strip.(split(opts["observables"], ',')))) :
+    default_diagnostic_observables(phase)
 zero_nev = parse(Int, get(opts, "zero-nev", "10"))
 flow_nev = parse(Int, get(opts, "flow-nev", "4"))
 flow_steps = parse(Int, get(opts, "flow-steps", "21"))

@@ -23,7 +23,7 @@ and the characteristic diagnostic/scaling points (all entries are physical
 
 | working phase label | physical `t''` values | selected manifold |
 |:--|:--|:--|
-| AHC | `-0.50, -0.45` | three lowest eigenstates |
+| candidate AHC | `-0.60, -0.55, -0.50, -0.45` | three lowest eigenstates |
 | FCI | `-0.30, -0.15, 0.00, 0.05, 0.10` | three lowest eigenstates |
 | candidate CDW | `0.20, 0.30` | three lowest eigenstates |
 
@@ -47,14 +47,17 @@ thread, which exhausts memory on this geometry. CLI `--mode matrix` or
 
 ## Local jobs
 
-One sweep point produces the ranked all-sector spectrum and two versions of
-the connected structure factor: the absolute ground state and the normalized
-projector over the three selected FCI reference states. The latter is called
+One sweep point produces the ranked all-sector spectrum and the total-density
+connected structure factor for both the absolute ground state and the
+normalized projector over the three selected FCI reference states. The latter is called
 the **FCI-manifold projector structure factor**. It is invariant under any
 permutation or unitary mixing within the same three-state subspace, including
 a rearrangement of the FCI ground-state manifold, but not under a change of
-the selected subspace itself. Each version has an
-allowed-momentum grid, a dense 101x101 map, and peak metrics:
+the selected subspace itself. Each version has an allowed-momentum grid, a
+dense 101x101 map, and peak metrics. The sweep also stores allowed-momentum
+and peak-metric files for the absolute-ground-state sublattice components
+$S^{AA}(\mathbf q)$ and $\operatorname{Re}S^{AB}(\mathbf q)$; no sublattice
+decomposition is applied to the manifold projector.
 
 ```bash
 julia --project=. phase_exploration/bin/run_sweep_point.jl \
@@ -82,26 +85,28 @@ level), and generates:
 - all-momentum-sector spectrum flow over one flux quantum (21 points,
   i.e. 20 intervals, on the same grid as the charge pump);
 - the manifold charge pump over one flux quantum;
-- a spatial/orbital cut ES for the absolute ground state;
-- the Li-Haldane/Regnault-Bernevig momentum-resolved particle ES of the
-  selected low-energy manifold (`N_A=2` by default).
+- for FCI candidates only, the Li-Haldane/Regnault-Bernevig
+  momentum-resolved particle ES of the selected low-energy manifold
+  (`N_A=2` by default).
 
 Individual diagnostics can be split across jobs, for example
-`--observables structure,flow,pump` or `--observables spatial_es,pes`. Flux and zero-flux
-checkpoints are shared and resumed sector by sector. Use `--refresh true` to
+`--observables structure,flow,pump` or, for an FCI point,
+`--observables pes`. Spatial/orbital ES is not part of this campaign. Flux and
+zero-flux checkpoints are shared and resumed sector by sector. Use `--refresh true` to
 rebuild derived CSVs while retaining compatible checkpoints; `--overwrite
 true` also recomputes the checkpoints.
 
 The diagnostics renderer extracts `E4-E3` along the full stored flux path and
 writes `manifold_gap_flow.svg`.  A pump plot is visibly marked with a warning
 when the assumed three-state manifold touches outside states, because its
-branch endpoints are then not a globally isolated-bundle invariant. Candidate-
-CDW pump plots are restricted to the currently configured characteristic
-points, so obsolete positive-side results such as `t''=0.21` are not rendered.
+branch endpoints are then not a globally isolated-bundle invariant. Diagnostic
+and charge-gap plot discovery is restricted to the configured characteristic
+points, so obsolete results such as `t''=0.21` are not rendered.
 
 See [`entanglement_counting_notes.md`](entanglement_counting_notes.md) for the
-`(1,3)` PES derivation, geometry-by-geometry counting, and an explanation of
-what the current spatial ES can and cannot establish.
+`(1,3)` PES derivation and geometry-by-geometry counting. Its discussion of
+spatial cuts is retained as background explaining why that observable was
+removed from the production campaign.
 
 The sweep plotter also writes `zero_flux_gap_diagnostics_<geometry>.svg` as a
 single-axis plot with only two global-energy differences, using
@@ -113,8 +118,7 @@ For the corrected `3x6` FCI run, the three manifold states are levels 1--3
 of the same momentum sector `(0,3)`.  The momentum-resolved particle PES uses
 the normalized projector over all three states and has exactly 117 levels
 below its largest entanglement gap, with the expected 6/7 even/odd-$K_2$
-sector counting.  The spatial-orbital spectrum instead uses the absolute
-ground state `(0,3,1)` and is resolved only by subsystem particle number.
+sector counting.
 The construction, numerical checks, and interpretation are recorded in
 [Section 5 of the counting notes](entanglement_counting_notes.md#5-corrected-3x6-fci-construction-and-numerical-audit).
 
@@ -156,11 +160,15 @@ Other plot kinds are `sweep`, `ed-spectra`, `structure`, `diagnostics`, and
 `charge-gap`. The `ed-spectra` renderer loops over every available sweep point
 and recreates its zero-twist, symmetry-resolved ED spectrum in the same style
 as the package's `plot_spectrum`, grouped by geometry. The sweep renderer
-creates separate spectrum, `max|S|`, normalized `max|S/mean(S)|`, and peak
-wavevector figures for every geometry plus multi-geometry panels. The two
-metric curves compare the absolute ground state with the FCI-manifold
-projector structure factor; dotted guides mark changes of the rank-one ground
-state. The spectrum sweeps plot the
+creates separate spectrum, normalized `max|S/mean(S)|`, and peak-wavevector
+figures for every geometry plus multi-geometry panels. The absolute-ground-
+state maximum plot separates `max|S^{AA}|` and `max|Re S^{AB}|`; dedicated
+combined figures overlay all geometries for each component. A separate
+FCI-manifold-projector maximum plot is restricted to
+$t''\in[-0.35,-0.20]$ to test the suspected rank-one jump without displaying
+the projector in regions where the fixed FCI slots are not the relevant
+low-energy manifold. Dotted guides mark changes of the rank-one ground state.
+The spectrum sweeps plot the
 lowest 20 global levels by default and use one
 default circular marker, with lines connecting the same momentum-sector and
 in-sector-level state across adjacent sweep points. All states are dark gray
@@ -220,7 +228,7 @@ bash phase_exploration/hpc/hyak_slurm_gen.sh
 ```
 
 This writes one `.sbatch` file per `(geometry, t'')` sweep point, plus diagnostic
-and charge-gap jobs for all eight configured AHC, FCI, and candidate-CDW
+and charge-gap jobs for all eleven configured AHC, FCI, and candidate-CDW
 characteristic points. The accompanying `data_jobs.txt` is the exact submission
 manifest. Review the collection, then queue everything with:
 
@@ -269,7 +277,7 @@ loaded on every worker. `_bootstrap.jl` contains no cluster-launch logic and
 remains safe for ordinary local CLI runs. Generated jobs print their resolved
 paths, resources, Julia version, and the failing shell line/command to the
 Slurm logs. Every stdout/stderr filename includes the explicit Slurm job ID,
-for example `tpp_dx7_3x5_fci_m0p15_slurm-12345678.out` and its matching
+for example `tpp_dx8_3x5_fci_m0p15_slurm-12345678.out` and its matching
 `.err` file.
 
 After an HPC-side failure, inspect the job state and corresponding logs with:

@@ -22,6 +22,7 @@ const BASE_PARAMS = Dict{String,Float64}(
 const SWEEP_NUMERATORS = round.(collect(-3.0:0.1:1.5); digits=10)
 const STUDY_GEOMETRIES = [(3, 4), (3, 5), (3, 6)]
 const CHARGE_GAP_GEOMETRIES = [(3, 3), (3, 4), (3, 5), (3, 6), (3, 7)]
+const FCI_PROJECTOR_PLOT_WINDOW = (-0.35, -0.20)
 
 struct PhaseSpec
     name::Symbol
@@ -40,7 +41,7 @@ const PHASE_SPECS = Dict{Symbol,PhaseSpec}(
 # Physical t'' values, not numerator values.  `CDW` remains a historical
 # working label until the positive-side order has been established.
 const CHARACTERISTIC_TPP_VALUES = Dict{Symbol,Vector{Float64}}(
-    :AHC => [-0.50, -0.45],
+    :AHC => [-0.60, -0.55, -0.50, -0.45],
     :FCI => [-0.30, -0.15, 0.00, 0.05, 0.10],
     :CDW => [0.20, 0.30],
 )
@@ -72,6 +73,13 @@ end
 function characteristic_tpp_values(name)
     spec = phase_spec(name)
     return copy(CHARACTERISTIC_TPP_VALUES[spec.name])
+end
+
+"Production diagnostics: PES is meaningful here only for FCI candidates."
+function default_diagnostic_observables(name)
+    observables = [:structure, :flow, :pump]
+    phase_spec(name).name == :FCI && push!(observables, :pes)
+    return observables
 end
 
 function require_phase_numerator(name, x::Union{Nothing,Real})

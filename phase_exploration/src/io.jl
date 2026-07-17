@@ -121,13 +121,14 @@ function sf_metrics(qx, qy, values)
     )
 end
 
-function write_sf_metrics_csv(path, metrics, sample, x, ground_sector)
+function write_sf_metrics_csv(path, metrics, sample, x, ground_sector;
+    component::AbstractString="total")
     ensure_parent(path)
     open(path, "w") do io
-        println(io, "L1,L2,n_sites,n_particles,tpp_numerator,tpp_actual,ground_k1,ground_k2,peak_qx,peak_qy,max_abs_S,mean_S,mean_abs_S,max_abs_S_over_mean_S,max_abs_S_over_mean_abs_S")
-        @printf(io, "%d,%d,%d,%d,%.16g,%.16g,%d,%d,%.16g,%.16g,%.16g,%.16g,%.16g,%.16g,%.16g\n",
+        println(io, "L1,L2,n_sites,n_particles,tpp_numerator,tpp_actual,ground_k1,ground_k2,component,peak_qx,peak_qy,max_abs_S,mean_S,mean_abs_S,max_abs_S_over_mean_S,max_abs_S_over_mean_abs_S")
+        @printf(io, "%d,%d,%d,%d,%.16g,%.16g,%d,%d,%s,%.16g,%.16g,%.16g,%.16g,%.16g,%.16g,%.16g\n",
             sample[1], sample[2], 2 * prod(sample), default_particle_number(sample),
-            x, actual_tpp(x), ground_sector[1], ground_sector[2],
+            x, actual_tpp(x), ground_sector[1], ground_sector[2], component,
             metrics.peak_q[1], metrics.peak_q[2], metrics.max_abs_S,
             metrics.mean_S, metrics.mean_abs_S, metrics.max_abs_S_over_mean_S,
             metrics.max_abs_S_over_mean_abs_S)

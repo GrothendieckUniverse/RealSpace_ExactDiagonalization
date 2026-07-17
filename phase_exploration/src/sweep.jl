@@ -13,6 +13,10 @@ function run_sweep_point(sample::Tuple{Int,Int}, x::Real;
         "x_$(tpp_tag(x))", "zero_flux.jld2")
     spectrum_path = joinpath(point_dir, "spectrum.csv")
     metrics_path = joinpath(point_dir, "structure_metrics.csv")
+    ground_aa_allowed_path = joinpath(point_dir, "structure_ground_aa_allowed.csv")
+    ground_aa_metrics_path = joinpath(point_dir, "structure_ground_aa_metrics.csv")
+    ground_ab_allowed_path = joinpath(point_dir, "structure_ground_ab_allowed.csv")
+    ground_ab_metrics_path = joinpath(point_dir, "structure_ground_ab_metrics.csv")
     gsd_allowed_path = joinpath(point_dir, "structure_fci_gsd_allowed.csv")
     gsd_dense_path = joinpath(point_dir, "structure_fci_gsd_dense.csv")
     gsd_metrics_path = joinpath(point_dir, "structure_fci_gsd_metrics.csv")
@@ -20,7 +24,9 @@ function run_sweep_point(sample::Tuple{Int,Int}, x::Real;
     structure_outputs = [joinpath(point_dir, "structure_allowed.csv"),
         joinpath(point_dir, "structure_dense.csv"), metrics_path,
         gsd_allowed_path, gsd_dense_path,
-        gsd_metrics_path, gsd_state_metrics_path]
+        gsd_metrics_path, gsd_state_metrics_path,
+        ground_aa_allowed_path, ground_aa_metrics_path,
+        ground_ab_allowed_path, ground_ab_metrics_path]
 
     requested_outputs_exist =
         (task == :spectrum && isfile(spectrum_path)) ||
@@ -58,6 +64,28 @@ function run_sweep_point(sample::Tuple{Int,Int}, x::Real;
         write_allowed_sf_csv(joinpath(point_dir, "structure_allowed.csv"), qx, qy, allowed)
         write_dense_sf_csv(joinpath(point_dir, "structure_dense.csv"), kx, ky, dense)
         write_sf_metrics_csv(metrics_path, metrics, sample, x, ground_sector)
+
+        sublattice_of(site) = model.lattice.site_list[site][2]
+        on_a = site -> sublattice_of(site) == 1
+        on_b = site -> sublattice_of(site) == 2
+        for (component, flavor_a, flavor_b, allowed_path, component_metrics_path) in [
+            ("AA", on_a, on_a, ground_aa_allowed_path, ground_aa_metrics_path),
+            ("real_AB", on_a, on_b, ground_ab_allowed_path, ground_ab_metrics_path),
+        ]
+            component_qx, component_qy, component_values =
+                structure_factor_allowed_momenta(
+                    model, ground_sector;
+                    filling_fraction=filling,
+                    flavor_a=flavor_a,
+                    flavor_b=flavor_b,
+                    ed_mode=mode,
+                    ed_data=ed_data)
+            component_metrics = sf_metrics(component_qx, component_qy, component_values)
+            write_allowed_sf_csv(
+                allowed_path, component_qx, component_qy, component_values)
+            write_sf_metrics_csv(component_metrics_path, component_metrics,
+                sample, x, ground_sector; component=component)
+        end
 
         reference_specs = get(FCI_REFERENCE_MANIFOLD, sample,
             Tuple{Tuple{Int,Int},Int}[])
@@ -111,7 +139,7 @@ function run_sweep_point(sample::Tuple{Int,Int}, x::Real;
         "nev_per_sector" => nev,
         "dense_k_resolution" => dense_resolution,
         "task" => task,
-        "structure_ensembles" => "absolute_ground_state;fixed_fci_reference_projector",
+        "structure_ensembles" => "absolute_ground_state_total;absolute_ground_state_AA;absolute_ground_state_real_AB;fixed_fci_reference_projector",
     ])
     @info "Completed sweep point" sample x tpp_actual=actual_tpp(x) mode point_dir
     return point_dir

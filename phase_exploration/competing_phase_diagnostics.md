@@ -117,6 +117,23 @@ $t''\in[-0.4,0]$.
 
 ## 2. Why `max(S)` and `max(S)/mean(S)` can have extra features
 
+For the two-site checkerboard unit cell, the absolute-ground-state sweep now
+also resolves
+
+$$
+S^{\alpha\beta}(\mathbf q)=\frac{1}{N_s}\sum_{i\in\alpha,\,j\in\beta}
+e^{i\mathbf q\cdot(\mathbf r_i-\mathbf r_j)}
+\left[\langle n_i n_j\rangle-\langle n_i\rangle\langle n_j\rangle\right],
+\qquad \alpha,\beta\in\{A,B\}.
+$$
+
+The common $1/N_s$ normalization is retained, so the total-density result
+decomposes as $S=S^{AA}+S^{AB}+S^{BA}+S^{BB}$. The reported cross-sublattice
+curve is $\operatorname{Re}S^{AB}$ because the observable API returns the real
+Fourier component. The plotted metrics are `max|S^{AA}|` and
+`max|Re S^{AB}|`, both evaluated only in the instantaneous absolute ground
+state. No $AA/AB$ decomposition is attached to the FCI-manifold projector.
+
 Even if every individual $S(\mathbf q;t'')$ is smooth, the displayed maximum
 
 $$
@@ -259,7 +276,9 @@ and candidate-CDW points are also replaced as requested.
 
 | working label | physical $t''$ | numerator $x=(2+2\sqrt2)t''$ | purpose |
 |:---|---:|---:|:---|
-| AHC | $-0.50$ | $-2.4142135624$ | proposed AHC, farther left |
+| AHC | $-0.60$ | $-2.8970562748$ | farther-left candidate-AHC point |
+| AHC | $-0.55$ | $-2.6556349186$ | candidate-AHC comparison point |
+| AHC | $-0.50$ | $-2.4142135624$ | central candidate-AHC point |
 | AHC | $-0.45$ | $-2.1727922061$ | proposed AHC, near the left spectral edge |
 | FCI | $-0.30$ | $-1.4485281374$ | before the $3\times5$ jump |
 | FCI | $-0.15$ | $-0.7242640687$ | after the jump |
@@ -274,9 +293,11 @@ on the data.  In particular, the actual isolated low-energy multiplicity at
 each point must be checked before interpreting a forced rank-three pump.
 
 Each characteristic-point run now produces the zero-flux spectrum, absolute-
-ground-state and selected-manifold structure factors, spectral flow, pump,
-spatial entanglement spectrum, particle entanglement spectrum, and summary.
-Charge gaps are generated independently for $3\times3$ through $3\times7$.
+ground-state and selected-manifold structure factors, spectral flow, pump, and
+summary. Particle entanglement spectra are generated only for the five FCI
+candidates; spatial/orbital entanglement spectra are removed. Charge gaps are
+generated independently for every candidate on $3\times3$ through
+$3\times7$.
 Results live in parameter-specific directories such as
 
 ```text
@@ -295,6 +316,10 @@ structure_fci_gsd_allowed.csv
 structure_fci_gsd_dense.csv
 structure_fci_gsd_metrics.csv
 structure_fci_gsd_state_metrics.csv
+structure_ground_aa_allowed.csv
+structure_ground_aa_metrics.csv
+structure_ground_ab_allowed.csv
+structure_ground_ab_metrics.csv
 ```
 
 The first three `structure_fci_gsd_*` files store
@@ -303,6 +328,13 @@ metrics.  The `state_metrics` file instead retains the three individual
 rank-one results for auditing.  These historical filenames are retained for
 compatibility; “GSD average” in a filename means the normalized-projector
 observable defined in Section 1.
+
+The four `structure_ground_{aa,ab}_*` files contain only absolute-ground-state
+data. They store $S^{AA}(\mathbf q)$ and the real cross component
+$\operatorname{Re}S^{AB}(\mathbf q)$ separately. Their maximum curves are not
+mixed with the FCI-manifold projector. The projector maximum instead receives
+a dedicated $t''\in[-0.35,-0.20]$ zoom, where it directly tests whether the
+apparent rank-one jump survives the basis-invariant manifold diagnostic.
 
 The metric sweeps overlay the absolute ground state and the FCI-manifold
 projector structure factor defined above.  Dotted vertical guides mark a

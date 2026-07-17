@@ -74,9 +74,17 @@ end
 
 function sweep_metric_series(sample::Tuple{Int,Int}, field::Symbol; ensemble::Symbol=:ground)
     values = Tuple{Float64,Float64}[]
-    filename = ensemble == :ground ? "structure_metrics.csv" :
-               ensemble == :fci_gsd ? "structure_fci_gsd_metrics.csv" :
-               error("Unknown structure-factor ensemble $ensemble.")
+    filename = if ensemble in (:ground, :ground_total)
+        "structure_metrics.csv"
+    elseif ensemble == :ground_aa
+        "structure_ground_aa_metrics.csv"
+    elseif ensemble == :ground_ab
+        "structure_ground_ab_metrics.csv"
+    elseif ensemble in (:fci_gsd, :fci_projector)
+        "structure_fci_gsd_metrics.csv"
+    else
+        error("Unknown structure-factor ensemble $ensemble.")
+    end
     for dir in existing_sweep_points(sample)
         path = joinpath(dir, filename)
         isfile(path) || continue
@@ -85,6 +93,42 @@ function sweep_metric_series(sample::Tuple{Int,Int}, field::Symbol; ensemble::Sy
     end
     sort!(values; by=first)
     return values
+end
+
+function metric_series_in_window(series, window=FCI_PROJECTOR_PLOT_WINDOW)
+    lower, upper = window
+    return [point for point in series if lower <= first(point) <= upper]
+end
+
+function draw_ground_sublattice_max_axis!(ax, sample)
+    plotted = false
+    for (ensemble, label, color) in [
+        (:ground_aa, "max |Sᴬᴬ(q)|", :darkorange2),
+        (:ground_ab, "max |Re Sᴬᴮ(q)|", :mediumpurple3),
+    ]
+        series = sweep_metric_series(sample, :max_abs_S; ensemble=ensemble)
+        isempty(series) && continue
+        lines!(ax, first.(series), last.(series); color=color, linewidth=2.0,
+            label=label)
+        scatter!(ax, first.(series), last.(series); color=color, markersize=6)
+        plotted = true
+    end
+    switches = sweep_ground_state_switches(sample)
+    isempty(switches) || vlines!(ax, switches; color=(:black, 0.22),
+        linestyle=:dot, linewidth=1.0)
+    plotted && axislegend(ax; position=:rt, labelsize=10)
+    return ax
+end
+
+function draw_fci_projector_zoom_axis!(ax, sample;
+    window=FCI_PROJECTOR_PLOT_WINDOW, label=geometry_tag(sample), color=:royalblue3)
+    series = metric_series_in_window(
+        sweep_metric_series(sample, :max_abs_S; ensemble=:fci_projector), window)
+    isempty(series) && return false
+    lines!(ax, first.(series), last.(series); color=color, linewidth=2.2, label=label)
+    scatter!(ax, first.(series), last.(series); color=color, markersize=7)
+    xlims!(ax, window...)
+    return true
 end
 
 function sweep_ground_state_switches(sample::Tuple{Int,Int})
@@ -268,11 +312,26 @@ function plot_sweep_results(; samples=STUDY_GEOMETRIES, max_ranks::Int=20)
 
         fig_m = Figure(size=(760, 520))
         ax_m = Axis(fig_m[1, 1]; xlabel="t′′", ylabel="max |S(q)|",
-            title="Structure-factor maximum — $tag", xtickformat=format_tpp_ticks)
-        draw_metric_axis!(ax_m, sample, :max_abs_S; color=:darkorange2)
-        path_m = joinpath(outdir, "max_abs_structure_factor_$(tag).svg")
+            title="Ground-state sublattice structure-factor maxima — $tag",
+            xtickformat=format_tpp_ticks)
+        draw_ground_sublattice_max_axis!(ax_m, sample)
+        path_m = joinpath(outdir,
+            "max_abs_ground_sublattice_structure_factors_$(tag).svg")
         save(path_m, fig_m)
         push!(outputs, path_m)
+
+        fig_mp = Figure(size=(760, 520))
+        ax_mp = Axis(fig_mp[1, 1]; xlabel="t′′", ylabel="max |Sᶠᶜⁱ_proj(q)|",
+            title="FCI-manifold projector maximum — $tag",
+            xtickformat=format_tpp_ticks)
+        if draw_fci_projector_zoom_axis!(ax_mp, sample;
+            label="FCI-manifold projector")
+            axislegend(ax_mp; position=:rt, labelsize=10)
+            path_mp = joinpath(outdir,
+                "max_abs_fci_manifold_projector_zoom_$(tag).svg")
+            save(path_mp, fig_mp)
+            push!(outputs, path_mp)
+        end
 
         fig_r = Figure(size=(760, 520))
         ax_r = Axis(fig_r[1, 1]; xlabel="t′′",
@@ -332,7 +391,6 @@ function plot_sweep_results(; samples=STUDY_GEOMETRIES, max_ranks::Int=20)
         push!(outputs, path)
 
         for (field, label, filename, color) in [
-            (:max_abs_S, "max |S(q)|", "max_abs_structure_factor_all_geometries.svg", :darkorange2),
             (:max_abs_S_over_mean_S, "max |S(q)/mean(S(q))|", "max_abs_structure_factor_over_mean_all_geometries.svg", :seagreen4),
         ]
             figm = Figure(size=(760 * ncol, 500 * nrow))
@@ -345,6 +403,57 @@ function plot_sweep_results(; samples=STUDY_GEOMETRIES, max_ranks::Int=20)
             Label(figm[0, 1:ncol], "$label versus physical t′′"; fontsize=20)
             path = joinpath(outdir, filename)
             save(path, figm)
+            push!(outputs, path)
+        end
+
+        geometry_colors = [:royalblue3, :darkorange2, :seagreen4,
+            :mediumpurple3, :firebrick3]
+        for (ensemble, component_label, filename) in [
+            (:ground_aa, "max |Sᴬᴬ(q)|",
+                "max_abs_ground_SAA_all_geometries.svg"),
+            (:ground_ab, "max |Re Sᴬᴮ(q)|",
+                "max_abs_ground_SAB_all_geometries.svg"),
+        ]
+            fig_component = Figure(size=(800, 540))
+            ax_component = Axis(fig_component[1, 1]; xlabel="t′′",
+                ylabel=component_label,
+                title="$component_label — absolute ground state",
+                xtickformat=format_tpp_ticks)
+            plotted = false
+            for (index, sample) in enumerate(active)
+                series = sweep_metric_series(sample, :max_abs_S; ensemble=ensemble)
+                isempty(series) && continue
+                color = geometry_colors[mod1(index, length(geometry_colors))]
+                lines!(ax_component, first.(series), last.(series); color=color,
+                    linewidth=2.0, label=geometry_tag(sample))
+                scatter!(ax_component, first.(series), last.(series); color=color,
+                    markersize=6)
+                plotted = true
+            end
+            if plotted
+                axislegend(ax_component; position=:rt)
+                path = joinpath(outdir, filename)
+                save(path, fig_component)
+                push!(outputs, path)
+            end
+        end
+
+        fig_projector = Figure(size=(800, 540))
+        ax_projector = Axis(fig_projector[1, 1]; xlabel="t′′",
+            ylabel="max |Sᶠᶜⁱ_proj(q)|",
+            title="FCI-manifold projector maximum — all geometries",
+            xtickformat=format_tpp_ticks)
+        projector_plotted = false
+        for (index, sample) in enumerate(active)
+            color = geometry_colors[mod1(index, length(geometry_colors))]
+            projector_plotted |= draw_fci_projector_zoom_axis!(
+                ax_projector, sample; label=geometry_tag(sample), color=color)
+        end
+        if projector_plotted
+            axislegend(ax_projector; position=:rt)
+            path = joinpath(outdir,
+                "max_abs_fci_manifold_projector_zoom_all_geometries.svg")
+            save(path, fig_projector)
             push!(outputs, path)
         end
 
@@ -517,21 +626,24 @@ function diagnostic_tpp(datadir)
     return nothing
 end
 
-function charge_pump_point_is_active(phase::Symbol, tpp)
-    phase == :CDW || return true
+function candidate_point_is_active(phase, tpp)
     tpp === nothing && return false
     return any(value -> isapprox(tpp, value; atol=1e-10, rtol=0.0),
         characteristic_tpp_values(phase))
 end
 
+charge_pump_point_is_active(phase, tpp) = candidate_point_is_active(phase, tpp)
+
 function existing_diagnostic_points(phase, sample::Tuple{Int,Int})
     root = joinpath(RESULT_ROOT, "diagnostics", String(phase), geometry_tag(sample))
     isdir(root) || return String[]
     points = String[]
-    diagnostic_tpp(root) !== nothing && push!(points, root) # legacy flat layout
+    candidate_point_is_active(phase, diagnostic_tpp(root)) &&
+        push!(points, root) # legacy flat layout
     for entry in readdir(root)
         dir = joinpath(root, entry)
-        isdir(dir) && diagnostic_tpp(dir) !== nothing && push!(points, dir)
+        isdir(dir) && candidate_point_is_active(phase, diagnostic_tpp(dir)) &&
+            push!(points, dir)
     end
     sort!(points; by=dir -> something(diagnostic_tpp(dir), Inf))
     return points
@@ -794,22 +906,8 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
             push!(outputs, path)
         end
 
-        spatial_path = joinpath(datadir, "spatial_entanglement_spectrum.csv")
-        if isfile(spatial_path)
-            rows = read_simple_csv(spatial_path)
-            fig = Figure(size=(760, 520))
-            ax = Axis(fig[1, 1]; xlabel="particles in spatial/orbital region A (N_A)",
-                ylabel="ξ = -log(λ)", title="$title_prefix spatial-orbital ES")
-            x = [csv_int(row.N_A) for row in rows]
-            y = [csv_float(row.entanglement_energy) for row in rows]
-            scatter!(ax, x, y; color=y, colormap=:viridis, markersize=7)
-            path = joinpath(outdir, "spatial_entanglement_spectrum.svg")
-            save(path, fig)
-            push!(outputs, path)
-        end
-
         pes_path = joinpath(datadir, "particle_entanglement_spectrum.csv")
-        if isfile(pes_path)
+        if phase_symbol == :FCI && isfile(pes_path)
             rows = read_simple_csv(pes_path)
             momenta = sort(unique((csv_int(row.k1), csv_int(row.k2)) for row in rows))
             index = Dict(k => i for (i, k) in enumerate(momenta))
@@ -855,7 +953,9 @@ function charge_gap_rows(phase)
     rows = NamedTuple[]
     for (dir, _, files) in walkdir(root)
         "charge_gap.csv" in files || continue
-        append!(rows, read_simple_csv(joinpath(dir, "charge_gap.csv")))
+        for row in read_simple_csv(joinpath(dir, "charge_gap.csv"))
+            candidate_point_is_active(phase, csv_float(row.tpp_actual)) && push!(rows, row)
+        end
     end
     sort!(rows; by=row -> (csv_float(row.tpp_actual), csv_int(row.n_sites)))
     return rows
@@ -867,7 +967,8 @@ function plot_charge_gap_results(; phases=[:AHC, :FCI, :CDW])
     mkpath(outdir)
     phase_data = NamedTuple[]
     colors = [:royalblue3, :darkorange2, :seagreen4, :mediumpurple3,
-        :firebrick3, :goldenrod2, :deeppink3, :turquoise3]
+        :firebrick3, :goldenrod2, :deeppink3, :turquoise3,
+        :slateblue3, :olivedrab3, :orchid3, :cornflowerblue]
     color_index = 0
 
     for phase in phases

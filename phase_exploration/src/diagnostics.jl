@@ -44,30 +44,6 @@ function write_pump_csv(path, pump)
     return path
 end
 
-function spatial_partition_a(model)
-    sample = Tuple(Int.(model.lattice.sample_size))
-    direction = sample[2] >= sample[1] ? 2 : 1
-    cut = fld(sample[direction], 2)
-    partition = Int[]
-    for (site, (cell, _)) in enumerate(model.lattice.site_list)
-        cell[direction] < cut && push!(partition, site)
-    end
-    isempty(partition) && error("Spatial cut produced an empty subsystem for $sample.")
-    return partition, direction, cut
-end
-
-function write_spatial_es_csv(path, result)
-    ensure_parent(path)
-    open(path, "w") do io
-        println(io, "N_A,level,probability,entanglement_energy,dim_A,dim_B")
-        for row in result.levels
-            @printf(io, "%d,%d,%.16g,%.16g,%d,%d\n", row.n_a, row.level,
-                row.probability, row.entanglement_energy, row.dim_a, row.dim_b)
-        end
-    end
-    return path
-end
-
 function write_pes_csv(path, result)
     ensure_parent(path)
     open(path, "w") do io
@@ -93,7 +69,7 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     x::Union{Nothing,Real}=nothing,
     manifold_size::Union{Nothing,Int}=nothing,
     mode::Symbol=mode_for(sample, :diagnostics),
-    observables::Vector{Symbol}=[:structure, :flow, :pump, :spatial_es, :pes],
+    observables::Vector{Symbol}=default_diagnostic_observables(phase_name),
     zero_nev::Int=10,
     flow_nev::Int=4,
     flow_flux_values::Vector{Float64}=collect(range(0.0, 1.0; length=21)),
@@ -105,9 +81,11 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     refresh::Bool=false,
     overwrite::Bool=false,
 )
-    valid = Set([:structure, :flow, :pump, :spatial_es, :pes])
-    all(obs in valid for obs in observables) || error("Unknown diagnostic in $observables.")
     spec = phase_spec(phase_name)
+    valid = Set([:structure, :flow, :pump, :pes])
+    all(obs in valid for obs in observables) || error("Unknown diagnostic in $observables.")
+    :pes in observables && spec.name != :FCI && error(
+        "Particle entanglement spectra are restricted to FCI candidates; got $(spec.name).")
     xvalue = require_phase_numerator(phase_name, x)
     nmanifold = isnothing(manifold_size) ? spec.manifold_size : manifold_size
     phase = String(spec.name)
@@ -121,7 +99,6 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
         :structure => joinpath(outdir, "structure_manifold_metrics.csv"),
         :flow => joinpath(outdir, "spectrum_flow.csv"),
         :pump => joinpath(outdir, "charge_pump.csv"),
-        :spatial_es => joinpath(outdir, "spatial_entanglement_spectrum.csv"),
         :pes => joinpath(outdir, "particle_entanglement_spectrum.csv"),
     )
     structure_outputs = [
@@ -252,20 +229,6 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
         write_pump_csv(output_for[:pump], pump)
     end
 
-    spatial = nothing
-    partition = Int[]
-    cut_direction = 0
-    cut_cell = 0
-    if :spatial_es in todo
-        partition, cut_direction, cut_cell = spatial_partition_a(model)
-        spatial = entanglement_spectrum(model, table[1].sector;
-            partition_a=partition,
-            filling_fraction=filling,
-            ed_mode=mode,
-            ed_data=ed_data)
-        write_spatial_es_csv(output_for[:spatial_es], spatial)
-    end
-
     pes = nothing
     pes_summary = (largest_gap=NaN, levels_below=0)
     if :pes in todo
@@ -283,8 +246,6 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
 
     # Preserve summaries when a long run is resumed with only missing
     # observables left to compute.
-    prior_path = joinpath(outdir, "summary.csv")
-    prior = isfile(prior_path) ? read_simple_csv(prior_path)[1] : nothing
     if pump === nothing && isfile(output_for[:pump])
         pump_rows = read_simple_csv(output_for[:pump])
         final_flux = maximum(csv_float(row.flux_over_2pi) for row in pump_rows)
@@ -308,20 +269,17 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     else
         npes_existing = pes === nothing ? 0 : length(pes.levels)
     end
-    if spatial === nothing && prior !== nothing
-        cut_direction = csv_int(prior.spatial_cut_direction)
-        cut_cell = csv_int(prior.spatial_cut_cells)
-    end
-
     ensure_parent(joinpath(outdir, "summary.csv"))
     open(joinpath(outdir, "summary.csv"), "w") do io
-        println(io, "phase,L1,L2,n_sites,n_particles,tpp_numerator,tpp_actual,solver_mode,manifold_size,manifold_sectors,pumped_charge_sum,pumped_charge_abs_sum,spatial_cut_direction,spatial_cut_cells,PES_NA,PES_levels,PES_largest_gap,PES_levels_below_largest_gap,manifold_state_levels")
+        println(io, "phase,L1,L2,n_sites,n_particles,tpp_numerator,tpp_actual,solver_mode,manifold_size,manifold_sectors,pumped_charge_sum,pumped_charge_abs_sum,PES_NA,PES_levels,PES_largest_gap,PES_levels_below_largest_gap,manifold_state_levels")
         sector_text = join(["$(row.sector[1]):$(row.sector[2])" for row in manifold_states], ';')
         state_text = join(["$(row.sector[1]):$(row.sector[2]):$(row.level)" for row in manifold_states], ';')
-        @printf(io, "%s,%d,%d,%d,%d,%.16g,%.16g,%s,%d,%s,%.16g,%.16g,%d,%d,%d,%d,%.16g,%d,%s\n",
+        pes_na_summary = (:pes in observables || isfile(output_for[:pes])) ?
+            n_particles_a : 0
+        @printf(io, "%s,%d,%d,%d,%d,%.16g,%.16g,%s,%d,%s,%.16g,%.16g,%d,%d,%.16g,%d,%s\n",
             phase, sample[1], sample[2], model.lattice.n_site, n_particles,
             xvalue, actual_tpp(xvalue), mode, nmanifold, sector_text,
-            pump_sum_existing, pump_abs_sum_existing, cut_direction, cut_cell, n_particles_a,
+            pump_sum_existing, pump_abs_sum_existing, pes_na_summary,
             npes_existing, pes_summary.largest_gap, pes_summary.levels_below, state_text)
     end
     @info "Completed phase diagnostics" phase sample xvalue tpp_actual=actual_tpp(xvalue) observables outdir

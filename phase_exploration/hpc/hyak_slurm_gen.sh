@@ -39,6 +39,8 @@ SWEEP_NUMERATORS=(
 # Each entry is `working_phase_label|physical_tpp`.  The result path contains
 # the physical value, so none of these independent points overwrites another.
 CHARACTERISTIC_POINTS=(
+  "AHC|-0.60"
+  "AHC|-0.55"
   "AHC|-0.50"
   "AHC|-0.45"
   "FCI|-0.30"
@@ -55,8 +57,8 @@ GAP_GEOMETRIES=(3x3 3x4 3x5 3x6 3x7)
 FLOW_CYCLES=1
 FLOW_STEPS=21
 PUMP_STEPS=21
-DIAGNOSTIC_PROTOCOL="characteristic_points_v7_structure_flow${FLOW_STEPS}_pump${PUMP_STEPS}"
-GAP_PROTOCOL="characteristic_points_v5"
+DIAGNOSTIC_PROTOCOL="characteristic_points_v8_structure_flow${FLOW_STEPS}_pump${PUMP_STEPS}_pes_fci_only"
+GAP_PROTOCOL="characteristic_points_v6_all_candidates"
 
 GENERATED_DIR="${SCRIPT_DIR}/generated"
 HYAK_LOG_DIR="${REPO_DIR}/phase_exploration/hpc/logs"
@@ -236,12 +238,16 @@ for geometry in "${SWEEP_GEOMETRIES[@]}"; do
     xtag="$(value_tag "${x}")"
     result_xtag="$(result_value_tag "${x}")"
     job="${GENERATED_DIR}/sweep_${geometry}_x_${xtag}.sbatch"
-    write_header "${job}" "tpp_sw_${geometry}_${xtag}"
+    write_header "${job}" "tpp_sw2_${geometry}_${xtag}"
     cat >> "${job}" <<EOF
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/spectrum.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_allowed.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_dense.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_metrics.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_ground_aa_allowed.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_ground_aa_metrics.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_ground_ab_allowed.csv
+# PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_ground_ab_metrics.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_fci_gsd_allowed.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_fci_gsd_dense.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${REPO_DIR}/phase_exploration/results/sweep/${geometry}/x_${result_xtag}/structure_fci_gsd_metrics.csv
@@ -267,7 +273,13 @@ for geometry in "${DIAGNOSTIC_GEOMETRIES[@]}"; do
     result_point_tag="tpp_$(result_value_tag "${tpp}")"
     result_dir="${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/${result_point_tag}"
     job="${GENERATED_DIR}/diagnostics_${geometry}_${phase_lower}_tpp_${point_tag}.sbatch"
-    write_header "${job}" "tpp_dx7_${geometry}_${phase_lower}_${point_tag}"
+    diagnostic_observables="structure,flow,pump"
+    required_pes_line=""
+    if [[ "${phase}" == "FCI" ]]; then
+      diagnostic_observables+=",pes"
+      required_pes_line="# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/particle_entanglement_spectrum.csv"
+    fi
+    write_header "${job}" "tpp_dx8_${geometry}_${phase_lower}_${point_tag}"
     cat >> "${job}" <<EOF
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/${DIAGNOSTIC_PROTOCOL}.done
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/zero_flux_spectrum.csv
@@ -280,14 +292,13 @@ for geometry in "${DIAGNOSTIC_GEOMETRIES[@]}"; do
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_manifold_state_metrics.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/spectrum_flow.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/charge_pump.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/spatial_entanglement_spectrum.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/particle_entanglement_spectrum.csv
+${required_pes_line}
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/summary.csv
 "${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
   "${REPO_DIR}/phase_exploration/bin/run_slurm_job.jl" \
   "${REPO_DIR}/phase_exploration/bin/run_diagnostic_point.jl" \
   --phase "${phase}" --geometry "${geometry}" --tpp "${tpp}" --mode "${MODE}" \
-  --observables structure,flow,pump,spatial_es,pes --zero-nev 10 --flow-nev 4 \
+  --observables "${diagnostic_observables}" --zero-nev 10 --flow-nev 4 \
   --flow-cycles "${FLOW_CYCLES}" --flow-steps "${FLOW_STEPS}" \
   --pump-steps "${PUMP_STEPS}" --pes-na 2 --dense-resolution 101 --refresh true
 printf 'protocol=%s\ntpp=%s\nflow_cycles=%s\nflow_steps=%s\npump_steps=%s\nmanifold_selection=%s\n' \
@@ -309,7 +320,7 @@ for geometry in "${GAP_GEOMETRIES[@]}"; do
     result_point_tag="tpp_$(result_value_tag "${tpp}")"
     result_dir="${REPO_DIR}/phase_exploration/results/charge_gap/${phase}/${geometry}/${result_point_tag}"
     job="${GENERATED_DIR}/charge_gap_${geometry}_${phase_lower}_tpp_${point_tag}.sbatch"
-    write_header "${job}" "tpp_cg5_${geometry}_${phase_lower}_${point_tag}"
+    write_header "${job}" "tpp_cg6_${geometry}_${phase_lower}_${point_tag}"
     cat >> "${job}" <<EOF
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/${GAP_PROTOCOL}.done
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/charge_gap.csv
