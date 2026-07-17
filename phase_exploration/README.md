@@ -262,7 +262,9 @@ repository project and depot explicitly propagated. The ED toolbox is then
 loaded on every worker. `_bootstrap.jl` contains no cluster-launch logic and
 remains safe for ordinary local CLI runs. Generated jobs print their resolved
 paths, resources, Julia version, and the failing shell line/command to the
-Slurm logs.
+Slurm logs. Every stdout/stderr filename includes the explicit Slurm job ID,
+for example `tpp_dx7_3x5_fci_m0p15_slurm-12345678.out` and its matching
+`.err` file.
 
 After an HPC-side failure, inspect the job state and corresponding logs with:
 

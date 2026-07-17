@@ -153,8 +153,8 @@ write_header() {
 #SBATCH --cpus-per-task=${CPUS_PER_TASK}
 #SBATCH --mem=${MEM_GB}G
 #SBATCH --chdir=${REPO_DIR}
-#SBATCH --output=${HYAK_LOG_DIR}/${job_name}_%j.out
-#SBATCH --error=${HYAK_LOG_DIR}/${job_name}_%j.err
+#SBATCH --output=${HYAK_LOG_DIR}/${job_name}_slurm-%j.out
+#SBATCH --error=${HYAK_LOG_DIR}/${job_name}_slurm-%j.err
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=${MAIL_USER}
 
@@ -204,8 +204,8 @@ cat > "${GENERATED_DIR}/setup_environment.sbatch" <<EOF
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=32G
 #SBATCH --chdir=${REPO_DIR}
-#SBATCH --output=${HYAK_LOG_DIR}/${SETUP_JOB_NAME}_%j.out
-#SBATCH --error=${HYAK_LOG_DIR}/${SETUP_JOB_NAME}_%j.err
+#SBATCH --output=${HYAK_LOG_DIR}/${SETUP_JOB_NAME}_slurm-%j.out
+#SBATCH --error=${HYAK_LOG_DIR}/${SETUP_JOB_NAME}_slurm-%j.err
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=${MAIL_USER}
 
@@ -338,8 +338,8 @@ cat > "${GENERATED_DIR}/plot_results.sbatch" <<EOF
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=32G
 #SBATCH --chdir=${REPO_DIR}
-#SBATCH --output=${HYAK_LOG_DIR}/tpp_plot_%j.out
-#SBATCH --error=${HYAK_LOG_DIR}/tpp_plot_%j.err
+#SBATCH --output=${HYAK_LOG_DIR}/tpp_plot_slurm-%j.out
+#SBATCH --error=${HYAK_LOG_DIR}/tpp_plot_slurm-%j.err
 set -Eeuo pipefail
 trap 'status=\$?; printf "ERROR: exit=%d line=%d command=%s\\n" "\${status}" "\${LINENO}" "\${BASH_COMMAND}" >&2; exit "\${status}"' ERR
 export JULIA_PROJECT="${JULIA_PROJECT_DIR}"
