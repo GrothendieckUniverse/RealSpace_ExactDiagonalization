@@ -27,9 +27,10 @@ SETUP_JOB_NAME="tpp_env_${REPO_REVISION}"
 # generated submission helper calls `sbatch` in a loop; `sbatch` returns
 # immediately, so all data jobs are queued asynchronously.
 
-# These are numerator values x. The Julia outputs and all plot x-axes use the
-# physical hopping t'' = x/(2+2sqrt(2)).
-SWEEP_NUMERATORS=(
+# These are the regular numerator values x. Exact numerators for every
+# diagnostic point are merged below, guaranteeing a matching zero-flux ED
+# scan even when a physical t'' does not land on this 0.1-spaced x grid.
+REGULAR_SWEEP_NUMERATORS=(
   -3.0 -2.9 -2.8 -2.7 -2.6 -2.5 -2.4 -2.3 -2.2 -2.1
   -2.0 -1.9 -1.8 -1.7 -1.6 -1.5 -1.4 -1.3 -1.2 -1.1
   -1.0 -0.9 -0.8 -0.7 -0.6 -0.5 -0.4 -0.3 -0.2 -0.1
@@ -81,6 +82,31 @@ result_value_tag() {
   printf -v formatted '%.4f' "$1"
   value_tag "${formatted}"
 }
+
+tpp_to_numerator() {
+  awk -v tpp="$1" 'BEGIN { printf "%.16g", tpp * (2 + 2 * sqrt(2)) }'
+}
+
+# Deduplicate by the same four-decimal numerator tag used for result
+# directories. Diagnostic points are appended exactly in physical t'', so
+# each one is available to both the diagnostic and ED-spectrum renderers.
+SWEEP_NUMERATORS=()
+declare -A SWEEP_NUMERATOR_TAGS=()
+add_sweep_numerator() {
+  local x="$1"
+  local result_tag
+  result_tag="$(result_value_tag "${x}")"
+  [[ -n "${SWEEP_NUMERATOR_TAGS[${result_tag}]:-}" ]] && return
+  SWEEP_NUMERATOR_TAGS["${result_tag}"]=1
+  SWEEP_NUMERATORS+=("${x}")
+}
+for x in "${REGULAR_SWEEP_NUMERATORS[@]}"; do
+  add_sweep_numerator "${x}"
+done
+for point in "${CHARACTERISTIC_POINTS[@]}"; do
+  IFS='|' read -r _ tpp <<< "${point}"
+  add_sweep_numerator "$(tpp_to_numerator "${tpp}")"
+done
 
 resource_for() {
   local task="$1"

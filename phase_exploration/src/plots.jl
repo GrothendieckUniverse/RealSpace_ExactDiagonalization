@@ -131,6 +131,36 @@ function draw_fci_projector_zoom_axis!(ax, sample;
     return true
 end
 
+function draw_ground_vs_fci_projector_zoom_axis!(ax, sample;
+    window=FCI_PROJECTOR_PLOT_WINDOW, legend::Bool=true)
+    ground = metric_series_in_window(
+        sweep_metric_series(sample, :max_abs_S; ensemble=:ground), window)
+    projector = metric_series_in_window(
+        sweep_metric_series(sample, :max_abs_S; ensemble=:fci_projector), window)
+
+    if !isempty(ground)
+        lines!(ax, first.(ground), last.(ground); color=:gray30, linewidth=2.0,
+            linestyle=:dash, label="global ground state")
+        scatter!(ax, first.(ground), last.(ground); color=:gray30, marker=:circle,
+            markersize=8)
+    end
+    if !isempty(projector)
+        lines!(ax, first.(projector), last.(projector); color=:royalblue3,
+            linewidth=2.4, label="FCI ground-state-manifold projector")
+        scatter!(ax, first.(projector), last.(projector); color=:royalblue3,
+            marker=:diamond, markersize=10)
+    end
+
+    switches = filter(value -> window[1] <= value <= window[2],
+        sweep_ground_state_switches(sample))
+    isempty(switches) || vlines!(ax, switches; color=(:black, 0.25),
+        linestyle=:dot, linewidth=1.2)
+    xlims!(ax, window...)
+    plotted = !isempty(ground) || !isempty(projector)
+    plotted && legend && axislegend(ax; position=:rt, labelsize=9)
+    return plotted
+end
+
 function sweep_ground_state_switches(sample::Tuple{Int,Int})
     switches = Float64[]
     previous = nothing
@@ -293,6 +323,15 @@ end
 function plot_sweep_results(; samples=STUDY_GEOMETRIES, max_ranks::Int=20)
     outdir = joinpath(FIGURE_ROOT, "sweep")
     mkpath(outdir)
+    # Remove superseded projector-only exports so the figure directory exposes
+    # only the direct ground-versus-projector comparison.
+    for sample in samples
+        rm(joinpath(outdir,
+            "max_abs_fci_manifold_projector_zoom_$(geometry_tag(sample)).svg");
+            force=true)
+    end
+    rm(joinpath(outdir, "max_abs_fci_manifold_projector_zoom_all_geometries.svg");
+        force=true)
     outputs = String[]
 
     for sample in samples
@@ -321,14 +360,12 @@ function plot_sweep_results(; samples=STUDY_GEOMETRIES, max_ranks::Int=20)
         push!(outputs, path_m)
 
         fig_mp = Figure(size=(760, 520))
-        ax_mp = Axis(fig_mp[1, 1]; xlabel="t′′", ylabel="max |Sᶠᶜⁱ_proj(q)|",
-            title="FCI-manifold projector maximum — $tag",
+        ax_mp = Axis(fig_mp[1, 1]; xlabel="t′′", ylabel="max |S(q)|",
+            title="Global ground state vs FCI-manifold projector — $tag",
             xtickformat=format_tpp_ticks)
-        if draw_fci_projector_zoom_axis!(ax_mp, sample;
-            label="FCI-manifold projector")
-            axislegend(ax_mp; position=:rt, labelsize=10)
+        if draw_ground_vs_fci_projector_zoom_axis!(ax_mp, sample)
             path_mp = joinpath(outdir,
-                "max_abs_fci_manifold_projector_zoom_$(tag).svg")
+                "max_abs_ground_vs_fci_projector_zoom_$(tag).svg")
             save(path_mp, fig_mp)
             push!(outputs, path_mp)
         end
@@ -438,23 +475,32 @@ function plot_sweep_results(; samples=STUDY_GEOMETRIES, max_ranks::Int=20)
             end
         end
 
-        fig_projector = Figure(size=(800, 540))
-        ax_projector = Axis(fig_projector[1, 1]; xlabel="t′′",
-            ylabel="max |Sᶠᶜⁱ_proj(q)|",
-            title="FCI-manifold projector maximum — all geometries",
-            xtickformat=format_tpp_ticks)
-        projector_plotted = false
-        for (index, sample) in enumerate(active)
-            color = geometry_colors[mod1(index, length(geometry_colors))]
-            projector_plotted |= draw_fci_projector_zoom_axis!(
-                ax_projector, sample; label=geometry_tag(sample), color=color)
-        end
-        if projector_plotted
-            axislegend(ax_projector; position=:rt)
-            path = joinpath(outdir,
-                "max_abs_fci_manifold_projector_zoom_all_geometries.svg")
-            save(path, fig_projector)
-            push!(outputs, path)
+        comparison_active = [sample for sample in active
+            if !isempty(metric_series_in_window(
+                sweep_metric_series(sample, :max_abs_S; ensemble=:ground))) ||
+               !isempty(metric_series_in_window(
+                sweep_metric_series(sample, :max_abs_S; ensemble=:fci_projector)))]
+        if !isempty(comparison_active)
+            fig_comparison = Figure(size=(620 * length(comparison_active), 510))
+            comparison_axes = Axis[]
+            comparison_plotted = false
+            for (index, sample) in enumerate(comparison_active)
+                ax = Axis(fig_comparison[1, index]; xlabel="t′′",
+                    ylabel=index == 1 ? "max |S(q)|" : "",
+                    title=geometry_tag(sample), xtickformat=format_tpp_ticks)
+                push!(comparison_axes, ax)
+                comparison_plotted |=
+                    draw_ground_vs_fci_projector_zoom_axis!(ax, sample)
+            end
+            length(comparison_axes) > 1 && linkyaxes!(comparison_axes...)
+            Label(fig_comparison[0, 1:length(comparison_active)],
+                "Global ground state vs FCI-manifold projector"; fontsize=20)
+            if comparison_plotted
+                path = joinpath(outdir,
+                    "max_abs_ground_vs_fci_projector_zoom_by_geometry.svg")
+                save(path, fig_comparison)
+                push!(outputs, path)
+            end
         end
 
 
@@ -488,13 +534,16 @@ function plot_ed_spectrum_results(; samples=STUDY_GEOMETRIES)
     outputs = String[]
     for sample in samples
         outdir = joinpath(FIGURE_ROOT, "ed_spectra", geometry_tag(sample))
+        legacy_paths = isdir(outdir) ?
+            [joinpath(outdir, name) for name in readdir(outdir)
+             if startswith(name, "x_") && endswith(name, ".svg")] :
+            String[]
         for point in existing_sweep_points(sample)
             spectrum_path = joinpath(point, "spectrum.csv")
             isfile(spectrum_path) || continue
             rows = read_simple_csv(spectrum_path)
             isempty(rows) && continue
 
-            xnumerator = csv_float(rows[1].tpp_numerator)
             xactual = csv_float(rows[1].tpp_actual)
             irrep_indices = [csv_int(row.irrep_index) - 1 for row in rows]
             energies = [csv_float(row.energy_minus_E0) for row in rows]
@@ -513,10 +562,13 @@ function plot_ed_spectrum_results(; samples=STUDY_GEOMETRIES)
                 alpha=0.75, strokecolor=:blue, strokewidth=0.5)
 
             mkpath(outdir)
-            path = joinpath(outdir, "x_$(tpp_tag(xnumerator)).svg")
+            path = joinpath(outdir, "tpp_$(tpp_tag(xactual)).svg")
             save(path, fig)
             push!(outputs, path)
         end
+        # Physical-value tags match diagnostic directories one-to-one. Remove
+        # the superseded numerator-named exports only after rendering succeeds.
+        foreach(path -> rm(path; force=true), legacy_paths)
     end
     @info "Wrote zero-twist ED spectrum figures" count=length(outputs)
     return outputs
@@ -963,19 +1015,23 @@ end
 
 function plot_charge_gap_results(; phases=[:AHC, :FCI, :CDW])
     outputs = String[]
-    outdir = joinpath(FIGURE_ROOT, "charge_gap")
-    mkpath(outdir)
-    phase_data = NamedTuple[]
-    colors = [:royalblue3, :darkorange2, :seagreen4, :mediumpurple3,
-        :firebrick3, :goldenrod2, :deeppink3, :turquoise3,
-        :slateblue3, :olivedrab3, :orchid3, :cornflowerblue]
-    color_index = 0
+    outroot = joinpath(FIGURE_ROOT, "charge_gap")
+    mkpath(outroot)
+    # The combined legacy panel is replaced by parameter-specific subfolders.
+    rm(joinpath(outroot, "tpp_charge_gap_finite_size_scaling.svg"); force=true)
+    phase_colors = Dict(
+        :AHC => :royalblue3,
+        :FCI => :seagreen4,
+        :CDW => :darkorange2,
+    )
 
     for phase in phases
         rows = charge_gap_rows(phase)
         isempty(rows) && continue
         by_tpp = group_rows(rows, (:tpp_actual,))
-        for point_rows in values(by_tpp)
+        sorted_groups = sort!(collect(values(by_tpp));
+            by=point_rows -> csv_float(point_rows[1].tpp_actual))
+        for point_rows in sorted_groups
             length(point_rows) >= 2 || continue
             sort!(point_rows; by=row -> csv_int(row.n_sites))
             x = [1 / csv_int(row.n_sites) for row in point_rows]
@@ -985,12 +1041,8 @@ function plot_charge_gap_results(; phases=[:AHC, :FCI, :CDW])
             intercept, slope = fit
             residual = sqrt(mean((design * fit .- y) .^ 2))
             tpp_actual = csv_float(point_rows[1].tpp_actual)
-            color_index += 1
-            color = colors[mod1(color_index, length(colors))]
-
-            push!(phase_data, (phase=String(phase), rows=point_rows, x=x, y=y,
-                tpp_actual=tpp_actual, intercept=intercept,
-                slope=slope, color=color))
+            phase_key = Symbol(uppercase(String(phase)))
+            color = get(phase_colors, phase_key, :royalblue3)
 
             fit_path = joinpath(RESULT_ROOT, "charge_gap", String(phase),
                 "finite_size_fit_tpp_$(tpp_tag(tpp_actual)).csv")
@@ -1001,37 +1053,42 @@ function plot_charge_gap_results(; phases=[:AHC, :FCI, :CDW])
                     csv_float(point_rows[1].tpp_numerator), tpp_actual,
                     length(point_rows), intercept, slope, residual)
             end
+
+            fig = Figure(size=(760, 520))
+            ax = Axis(fig[1, 1]; xlabel="1 / N_sites", ylabel="charge gap Δc",
+                title="$(phase) charge-gap scaling — t′′ = $(format_tpp(tpp_actual))")
+            hlines!(ax, [0.0]; color=:black, linestyle=:dot, linewidth=1.2)
+            vlines!(ax, [0.0]; color=:black, linestyle=:dot, linewidth=1.2)
+
+            line_x = collect(range(0.0, maximum(x); length=200))
+            fit_y = intercept .+ slope .* line_x
+            lines!(ax, line_x, fit_y; color=color, linewidth=2.2,
+                linestyle=:dash,
+                label=@sprintf("linear fit: Δc(∞) = %.3f", intercept))
+            order = sortperm(x)
+            lines!(ax, x[order], y[order]; color=color, linewidth=1.5,
+                label="finite-size data")
+            scatter!(ax, x, y; color=color, markersize=11)
+            scatter!(ax, [0.0], [intercept]; color=color, marker=:diamond,
+                markersize=14, strokecolor=:black, strokewidth=0.5,
+                label="thermodynamic intercept")
+
+            plotted_values = vcat(y, fit_y, [intercept, 0.0])
+            ymin, ymax = extrema(plotted_values)
+            margin = max(0.08 * (ymax - ymin), 0.04)
+            ylims!(ax, ymin - margin, ymax + margin)
+            axislegend(ax; position=:lt, labelsize=10)
+
+            outdir = joinpath(outroot, String(phase),
+                "tpp_$(tpp_tag(tpp_actual))")
+            mkpath(outdir)
+            path = joinpath(outdir, "finite_size_scaling.svg")
+            save(path, fig)
+            push!(outputs, path)
         end
     end
 
-    isempty(phase_data) && return outputs
-    fig = Figure(size=(760, 520))
-    ax = Axis(fig[1, 1]; xlabel="1 / N_sites", ylabel="charge gap Δc",
-        title="Charge-gap finite-size scaling with 1/N_sites → 0 extrapolation")
-    hlines!(ax, [0.0]; color=:black, linestyle=:dot, linewidth=1.2)
-    vlines!(ax, [0.0]; color=:black, linestyle=:dot, linewidth=1.2)
-
-    ymaximum = 0.0
-    for data in phase_data
-        line_x = collect(range(0.0, maximum(data.x); length=200))
-        fit_y = data.intercept .+ data.slope .* line_x
-        lines!(ax, line_x, fit_y; color=data.color, linewidth=2, linestyle=:dash)
-        order = sortperm(data.x)
-        label = "$(data.phase) — t′′ = $(format_tpp(data.tpp_actual))"
-        lines!(ax, data.x[order], data.y[order]; color=data.color, linewidth=1.8,
-            label=label)
-        scatter!(ax, data.x, data.y; color=data.color, markersize=10)
-        scatter!(ax, [0.0], [data.intercept]; color=data.color, marker=:diamond,
-            markersize=13, strokecolor=:black, strokewidth=0.5)
-        ymaximum = max(ymaximum, maximum(data.y), maximum(fit_y), data.intercept)
-    end
-    ylims!(ax, -0.1, 1.1 * ymaximum)
-    axislegend(ax; position=:lt)
-
-    path = joinpath(outdir, "tpp_charge_gap_finite_size_scaling.svg")
-    save(path, fig)
-    push!(outputs, path)
-    @info "Wrote combined charge-gap scaling figure" phases=length(phase_data) path
+    @info "Wrote parameter-resolved charge-gap scaling figures" count=length(outputs) outroot
     return outputs
 end
 

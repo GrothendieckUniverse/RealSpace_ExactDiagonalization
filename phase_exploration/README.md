@@ -11,15 +11,18 @@ t'' = x / (2 + 2 sqrt(2)).
 Every generated CSV stores both `tpp_numerator=x` and `tpp_actual=t''`.
 Crucially, **every sweep plot uses the physical `t''` as its horizontal
 coordinate**; plot annotations show only this physical value, rounded to two
-decimal places. The numerator is used only to define the grid and make
-readable filenames.
+decimal places. The numerator defines sweep result/checkpoint directories;
+rendered ED spectra use the physical `tpp_<value>.svg` tag shared by
+diagnostics.
 
 ## Central configuration
 
 Edit [`src/config.jl`](src/config.jl) before a production campaign. It contains
-the model parameters, geometries, 0.1-spaced numerator sweep, solver policy,
-and the characteristic diagnostic/scaling points (all entries are physical
-`t''` values):
+the model parameters, geometries, regular 0.1-spaced numerator sweep, solver
+policy, and the characteristic diagnostic/scaling points (all entries are
+physical `t''` values). The exact numerator corresponding to every
+characteristic point is automatically merged into the ED sweep, so a
+diagnostic such as `t''=-0.15` always has a matching zero-flux spectrum:
 
 | working phase label | physical `t''` values | selected manifold |
 |:--|:--|:--|
@@ -135,10 +138,11 @@ true` for intentionally recomputing the ED sectors.
 
 It scans every momentum sector at `N-1`, `N`, and `N+1`, then stores
 `Delta_c = E0(N+1) + E0(N-1) - 2 E0(N)`. Run it for 3x3, 3x4, 3x5, 3x6, and
-3x7 in each phase. The plotter combines all phases in one panel, connects each
-phase's raw sizes, draws its independent linear extrapolation as a matching
-dashed line, and records the `1/N_sites -> 0` intercept and RMS residual. The
-axis includes the gapless `Delta_c=0` reference explicitly.
+3x7 in each phase. The plotter writes one parameter-resolved finite-size
+scaling figure under `figures/charge_gap/<phase>/tpp_<value>/`, connects the
+raw sizes, draws an independent linear extrapolation, and records the
+`1/N_sites -> 0` intercept and RMS residual. Every figure includes the gapless
+`Delta_c=0` reference explicitly.
 
 For the central `N0` calculation, a missing charge-gap checkpoint is seeded
 automatically from a compatible sweep `zero_flux.jld2` when one exists. If both
@@ -159,15 +163,18 @@ julia --project=. phase_exploration/bin/plot_results.jl --kind all
 Other plot kinds are `sweep`, `ed-spectra`, `structure`, `diagnostics`, and
 `charge-gap`. The `ed-spectra` renderer loops over every available sweep point
 and recreates its zero-twist, symmetry-resolved ED spectrum in the same style
-as the package's `plot_spectrum`, grouped by geometry. The sweep renderer
+as the package's `plot_spectrum`, grouped by geometry and named by physical
+`t''` so characteristic points match diagnostic directory names. The sweep renderer
 creates separate spectrum, normalized `max|S/mean(S)|`, and peak-wavevector
 figures for every geometry plus multi-geometry panels. The absolute-ground-
 state maximum plot separates `max|S^{AA}|` and `max|Re S^{AB}|`; dedicated
-combined figures overlay all geometries for each component. A separate
-FCI-manifold-projector maximum plot is restricted to
-$t''\in[-0.35,-0.20]$ to test the suspected rank-one jump without displaying
-the projector in regions where the fixed FCI slots are not the relevant
-low-energy manifold. Dotted guides mark changes of the rank-one ground state.
+combined figures overlay all geometries for each component. In
+$t''\in[-0.35,-0.20]$, parameter-matched curves compare the global-ground-state
+`max|S(q)|` directly against the FCI-ground-state-manifold-projector
+`max|S(q)|`, both in one figure per geometry and in a three-panel 3x4/3x5/3x6
+summary. The projector is not displayed outside this window, where the fixed
+FCI slots need not be the relevant low-energy manifold. Dotted guides mark
+changes of the rank-one ground state.
 The spectrum sweeps plot the
 lowest 20 global levels by default and use one
 default circular marker, with lines connecting the same momentum-sector and
@@ -205,7 +212,7 @@ phase_exploration/
     ed_spectra/<L1xL2>/
     structure_factor/<L1xL2>/
     diagnostics/<phase>/<L1xL2>/
-    charge_gap/
+    charge_gap/<phase>/tpp_<physical-value>/finite_size_scaling.svg
   checkpoints/                 # ignored; large and resumable
 ```
 
@@ -229,8 +236,11 @@ bash phase_exploration/hpc/hyak_slurm_gen.sh
 
 This writes one `.sbatch` file per `(geometry, t'')` sweep point, plus diagnostic
 and charge-gap jobs for all eleven configured AHC, FCI, and candidate-CDW
-characteristic points. The accompanying `data_jobs.txt` is the exact submission
-manifest. Review the collection, then queue everything with:
+characteristic points. The sweep set is the union of the regular numerator
+grid and the exact numerators derived from those eleven physical diagnostic
+values; deduplication uses the same tag as the result directory. The
+accompanying `data_jobs.txt` is the exact submission manifest. Review the
+collection, then queue everything with:
 
 ```bash
 phase_exploration/hpc/generated/submit_all.sh

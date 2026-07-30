@@ -18,8 +18,9 @@ const BASE_PARAMS = Dict{String,Float64}(
     "λ" => 2.8,
 )
 
-# A uniform extensive grid. Extra points may be supplied to each CLI runner.
-const SWEEP_NUMERATORS = round.(collect(-3.0:0.1:1.5); digits=10)
+# The regular extensive grid. Exact diagnostic points are merged into the
+# production sweep below so every diagnostic has a matching zero-flux ED scan.
+const REGULAR_SWEEP_NUMERATORS = round.(collect(-3.0:0.1:1.5); digits=10)
 const STUDY_GEOMETRIES = [(3, 4), (3, 5), (3, 6)]
 const CHARGE_GAP_GEOMETRIES = [(3, 3), (3, 4), (3, 5), (3, 6), (3, 7)]
 const FCI_PROJECTOR_PLOT_WINDOW = (-0.35, -0.20)
@@ -45,6 +46,14 @@ const CHARACTERISTIC_TPP_VALUES = Dict{Symbol,Vector{Float64}}(
     :FCI => [-0.30, -0.15, 0.00, 0.05, 0.10],
     :CDW => [0.20, 0.30],
 )
+
+const DIAGNOSTIC_TPP_VALUES =
+    sort!(unique(vcat(values(CHARACTERISTIC_TPP_VALUES)...)))
+const DIAGNOSTIC_SWEEP_NUMERATORS = TPP_DENOMINATOR .* DIAGNOSTIC_TPP_VALUES
+const SWEEP_NUMERATORS = sort!(unique(vcat(
+    REGULAR_SWEEP_NUMERATORS,
+    DIAGNOSTIC_SWEEP_NUMERATORS,
+)))
 
 # The symmetry slots that form the already-established FCI manifold at its
 # reference point.  Each entry is ((k1,k2), level_in_sector), not merely a
