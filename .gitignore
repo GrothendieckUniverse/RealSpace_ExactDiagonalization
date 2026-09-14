@@ -7,3 +7,7 @@ phase_exploration_bak/
 
 reasonix.toml
 .codegraph
+# Publish the benchmark comparison referenced by the README
+!benchmark/figures/
+benchmark/figures/*
+!benchmark/figures/benchmark_comparison.svg

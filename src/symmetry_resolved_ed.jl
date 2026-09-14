@@ -22,7 +22,6 @@
 # ============================================================================
 
 using Base.Threads
-using Distributed
 using LinearAlgebra, SparseArrays, Arpack, KrylovKit
 using Printf, JLD2
 using MLStyle
@@ -31,9 +30,9 @@ using MLStyle
 # Parallelism strategy (HPC-first):
 #   - Launch: julia -p N  (distributed workers)
 #   - Default: BLAS threads = 1 (don't compete with distributed workers)
-#   - Hamiltonian construction: Distributed.pmap across workers
-#   - Diagonalization: temporarily BLAS.set_num_threads(nprocs()), restore to 1
-#   - Matrix-free H|ψ⟩: Threads.@threads (shared-memory) + optional pmap columns
+#   - Hamiltonian construction: Threads.@threads (shared-memory)
+#   - Diagonalization: temporarily BLAS.set_num_threads(nthreads()), restore to 1
+#   - Matrix-free H|ψ⟩: Threads.@threads over a precomputed projection table
 # ═══════════════════════════════════════════════════════════════════════════
 
 BLAS.set_num_threads(1)  # HPC default: one BLAS thread per process
@@ -106,14 +105,17 @@ end
 
 @inline group_order(G::Finite_Symmetry_Group)::Int = length(G.operations)
 
-function ensure_distributed_workers_loaded!()
-    nprocs() == 1 && return nothing
-    for w in workers()
-        remotecall_fetch(Core.eval, w, Main, :(using RealSpace_ExactDiagonalization))
-        remotecall_fetch(Core.eval, w, Main, :(using LinearAlgebra; LinearAlgebra.BLAS.set_num_threads(1)))
-    end
-    return nothing
+"Indices of inverse unitary operations, including their site phases."
+function _inverse_operation_indices(G::Finite_Symmetry_Group)
+    [begin
+        idx = findfirst(h -> h.perm[g.perm] == collect(1:G.n_site) &&
+            all(isapprox.(g.perm_phases .* h.perm_phases[g.perm], 1; atol=1e-12)),
+            G.operations)
+        idx === nothing && error("Symmetry operations are not closed under inversion.")
+        idx
+    end for g in G.operations]
 end
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. Group action on a bitmask — O(k) with bit tricks
@@ -199,6 +201,103 @@ end
     return (one(Mask) << n_filled) - one(Mask)
 end
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Combinadic (colexicographic) rank of a fixed-popcount bitmask.
+#
+# XDiag's `rank_combination` (combinatorics/combinations/enumerate_combinations.cpp):
+# for set-bit positions b_0 < b_1 < ... < b_{k-1} the colex rank is
+#   index(bits) = Σ_{j=0}^{k-1} binom(b_j, j+1),
+# a deterministic bijection between k-subsets and [0, C(n,k)) that needs NO
+# hash table.  This is the O(1)-memory backbone of the representative tables.
+# ─────────────────────────────────────────────────────────────────────────────
+
+const _BINOM_CACHE = Dict{Tuple{Int,Int},Int}()
+
+@inline function _binom_cached(n::Int, k::Int)::Int
+    (k < 0 || k > n) && return 0
+    key = (n, k)
+    return get!(_BINOM_CACHE, key) do
+        binomial(n, k)
+    end
+end
+
+"""
+Combinadic Rank of a Fixed-Popcount Bitmask
+---
+`rank_combination(m) = Σ_j binom(b_j, j+1)` over the set-bit positions
+`b_0 < b_1 < …` (0-based), a bijection between k-subsets of `1:n_site` and
+`[0, binomial(n_site, k))`.  Ported from XDiag's `rank_combination`.
+"""
+@inline function rank_combination(m::Mask)::Int
+    idx = 0
+    j = 1
+    tmp = m
+    @inbounds while tmp != 0
+        lsb = tmp & -tmp
+        b = trailing_zeros(lsb)  # 0-based bit position
+        idx += _binom_cached(Int(b), j)
+        j += 1
+        tmp ⊻= lsb
+    end
+    return idx
+end
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LinTable — split-table O(1) combinadic rank (Lin 1990; XDiag lin_table.hpp)
+#
+# Split the mask into an upper half `hi` (n_left bits) and a lower half `lo`
+# (n_right bits).  Then
+#   rank(m) = L[hi] + R[lo]
+# with L[u] = Σ_{u'<u} binom(n_right, k − popcount(u')) and R[v] the colex
+# rank of v within its own popcount class.  Memory = 2^{n_left} + 2^{n_right}
+# Int entries; gated to n_site ≤ 42 (XDiag's ladder), otherwise the O(k)
+# `rank_combination` fallback is used.
+# ─────────────────────────────────────────────────────────────────────────────
+
+const LIN_TABLE_MAX_N_SITE = 42
+
+"Build the LinTable split-rank arrays for (n_site, n_filled)."
+function _lin_table(n_site::Int, n_filled::Int)
+    n_right = n_site ÷ 2
+    n_left = n_site - n_right
+    size_right = 1 << n_right
+    size_left = 1 << n_left
+    right_indices = zeros(Int, size_right)
+    for v in 0:(size_right - 1)
+        r = 0
+        j = 1
+        tmp = v
+        while tmp != 0
+            lsb = tmp & -tmp
+            b = trailing_zeros(lsb)
+            r += _binom_cached(Int(b), j)
+            j += 1
+            tmp ⊻= lsb
+        end
+        right_indices[v + 1] = r
+    end
+    left_indices = zeros(Int, size_left)
+    acc = 0
+    for u in 0:(size_left - 1)
+        left_indices[u + 1] = acc
+        pc = count_ones(u)
+        rem = n_filled - pc
+        if 0 <= rem <= n_right
+            acc += binomial(n_right, rem)
+        end
+    end
+    return left_indices, right_indices, n_right
+end
+
+"O(1) combinadic rank from the split tables (0-based rank)."
+@inline function lin_index(m::Mask, lin_left::Vector{Int}, lin_right::Vector{Int}, n_right::Int)::Int
+    hi = Int(m >> n_right)
+    lo = Int(m & ((one(Mask) << n_right) - one(Mask)))
+    return lin_left[hi + 1] + lin_right[lo + 1]
+end
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 6. Symmetry Orbit Catalog
 # ═══════════════════════════════════════════════════════════════════════════
@@ -209,6 +308,22 @@ mutable struct Symmetry_Orbit_Catalog
     stabilizer_order_list::Vector{Int}
     stabilizer_g_indices_list::Vector{Vector{Int}}
     stabilizer_phases_list::Vector{Vector{ComplexF64}}
+
+    # XDiag-style representative tables over the FULL fixed-filling basis,
+    # indexed by the combinadic rank (see `rank_combination`).  Built by
+    # orbit expansion — no `Set` of visited masks, no hash table.
+    #   rep_rank_table[idx] : 1-based representative index of the orbit
+    #                         containing the mask with rank idx (0 = unset)
+    #   rep_sym_table[idx]  : 1-based group-element index g with g(mask) = rep
+    #   rep_amp_table[idx]  : canonicalization amplitude α_g(mask) (ComplexF64;
+    #                         the per-site U(1) phases make it state-dependent,
+    #                         unlike XDiag's pure-permutation case)
+    rep_rank_table::Vector{Int32}
+    rep_sym_table::Vector{Int32}
+    rep_amp_table::Vector{ComplexF64}
+    lin_left::Vector{Int}
+    lin_right::Vector{Int}
+    lin_n_right::Int
 end
 
 """
@@ -223,6 +338,7 @@ recomputation.  This avoids re-running Gosper's hack at every flux point.
 function update_orbit_stabilizer_phases!(catalog::Symmetry_Orbit_Catalog,
     new_group::Finite_Symmetry_Group, particle_statistics::Particle_Statistics)
     catalog.symmetry_group == new_group && return catalog  # no-op
+    inverse_indices = _inverse_operation_indices(new_group)
     catalog.symmetry_group = new_group
     @inbounds for orbit_idx in eachindex(catalog.representative_mask_list)
         gidxs = catalog.stabilizer_g_indices_list[orbit_idx]
@@ -232,6 +348,21 @@ function update_orbit_stabilizer_phases!(catalog::Symmetry_Orbit_Catalog,
                 catalog.representative_mask_list[orbit_idx],
                 new_group.operations[gidx], particle_statistics)
             phases[j] = α
+        end
+    end
+    # Refresh the canonicalization amplitudes in the representative tables
+    # (the orbit partition and the rep_sym entries depend only on the
+    # permutation part of the operations, which is unchanged).
+    @inbounds for orbit_idx in eachindex(catalog.representative_mask_list)
+        repr_mask = catalog.representative_mask_list[orbit_idx]
+        for gidx in 1:group_order(new_group)
+            shifted, α = apply_operation_to_mask(
+                repr_mask, new_group.operations[gidx], particle_statistics)
+            idx = rank_combination(shifted) + 1
+            if catalog.rep_rank_table[idx] == orbit_idx
+                catalog.rep_sym_table[idx] = inverse_indices[gidx]
+                catalog.rep_amp_table[idx] = conj(α)
+            end
         end
     end
     return catalog
@@ -258,12 +389,18 @@ function build_symmetry_orbit_catalog(;
     sizehint!(stab_gidx_list, n_orbits_est)
     sizehint!(stab_phase_list, n_orbits_est)
 
-    seen = Set{Mask}()
-    sizehint!(seen, n_total)
+    # XDiag-style representative tables over the full basis (no `Set{Mask}`!)
+    rep_rank_table = zeros(Int32, n_total)
+    rep_sym_table = zeros(Int32, n_total)
+    rep_amp_table = zeros(ComplexF64, n_total)
+    if n_site <= LIN_TABLE_MAX_N_SITE
+        lin_left, lin_right, lin_n_right = _lin_table(n_site, n_filled)
+    else
+        lin_left = Int[]; lin_right = Int[]; lin_n_right = -1
+    end
 
     nG = group_order(symmetry_group)
-    orbit_masks = Vector{Mask}(undef, nG)
-    orbit_amps = Vector{ComplexF64}(undef, nG)
+    inverse_indices = _inverse_operation_indices(symmetry_group)
 
     print("\tBuilding symmetry-orbit catalog (n_filled=$n_filled, |G|=$nG) ... ")
 
@@ -284,35 +421,52 @@ function build_symmetry_orbit_catalog(;
             push!(stab_order_list, length(gidx_stab))
             push!(stab_gidx_list, gidx_stab)
             push!(stab_phase_list, phase_stab)
+            # orbit expansion for the single orbit
+            @inbounds for gidx in 1:nG
+                shifted, α = apply_operation_to_mask(m, symmetry_group.operations[gidx], particle_statistics)
+                idx = lin_n_right >= 0 ? lin_index(shifted, lin_left, lin_right, lin_n_right) + 1 : rank_combination(shifted) + 1
+                rep_rank_table[idx] = 1
+                rep_sym_table[idx] = inverse_indices[gidx]
+                rep_amp_table[idx] = conj(α)
+            end
         else
             x = _first_combination_mask(n_filled)
             upper = one(Mask) << n_site
             while x < upper
                 m = x
-                if m in seen
+
+                # Is m the minimum of its orbit?  (XDiag `isrepresentative`:
+                # early-exit on the first group image smaller than m.)  No
+                # `seen` set is needed: orbits are disjoint, and every
+                # non-representative is skipped here.
+                is_rep = true
+                @inbounds for gidx in 1:nG
+                    shifted, _ = apply_operation_to_mask(m, symmetry_group.operations[gidx], particle_statistics)
+                    if shifted < m
+                        is_rep = false
+                        break
+                    end
+                end
+                if !is_rep
                     x = _gosper_next(x)
                     continue
                 end
 
-                min_mask = typemax(Mask)
-                @inbounds for gidx in 1:nG
-                    shifted, α = apply_operation_to_mask(m, symmetry_group.operations[gidx], particle_statistics)
-                    orbit_masks[gidx] = shifted
-                    orbit_amps[gidx] = α
-                    shifted < min_mask && (min_mask = shifted)
-                end
-                @assert min_mask == m "Gosper ordering violation"
-
-                @inbounds for shifted in orbit_masks
-                    push!(seen, shifted)
-                end
-
+                # m is the orbit minimum: one full pass computes the
+                # stabilizer AND expands the orbit into the representative
+                # tables (each full-basis state is written exactly once).
+                rep_idx = length(repr_list) + 1
                 gidx_stab = Int[]
                 phase_stab = ComplexF64[]
                 @inbounds for gidx in 1:nG
-                    if orbit_masks[gidx] == m
+                    shifted, α = apply_operation_to_mask(m, symmetry_group.operations[gidx], particle_statistics)
+                    idx = lin_n_right >= 0 ? lin_index(shifted, lin_left, lin_right, lin_n_right) + 1 : rank_combination(shifted) + 1
+                    rep_rank_table[idx] = rep_idx
+                    rep_sym_table[idx] = inverse_indices[gidx]
+                    rep_amp_table[idx] = conj(α)
+                    if shifted == m
                         push!(gidx_stab, gidx)
-                        push!(phase_stab, orbit_amps[gidx])
+                        push!(phase_stab, α)
                     end
                 end
 
@@ -328,7 +482,8 @@ function build_symmetry_orbit_catalog(;
 
     n_orbits = length(repr_list)
     printstyled("Done. $(n_orbits) orbits (reduction $(round(n_orbits/n_total*100, digits=1))%).  t=$(round(res.time, digits=3))s\n", bold=true)
-    return Symmetry_Orbit_Catalog(symmetry_group, repr_list, stab_order_list, stab_gidx_list, stab_phase_list)
+    return Symmetry_Orbit_Catalog(symmetry_group, repr_list, stab_order_list, stab_gidx_list, stab_phase_list,
+        rep_rank_table, rep_sym_table, rep_amp_table, lin_left, lin_right, lin_n_right)
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -407,57 +562,48 @@ end
 """
     CanonicalMap
 
-Lazily-populated cache: scattered_mask → (repr_mask, g_idx, α_g).
+Precomputed representative lookup: scattered_mask → (repr_mask, g_idx, α_g).
 
-Used uniformly across ALL ED modes (matrix, distributed-matrix, and matrix-free)
-to avoid repeated O(|G|) canonicalization of the same scattered masks.
+Backed by the XDiag-style representative tables built once inside the
+orbit catalog (`rep_rank_table` / `rep_sym_table` / `rep_amp_table`,
+indexed by the combinadic rank — no lazy Dict, no hashing).  Used
+uniformly across ALL ED modes (matrix, distributed-matrix, and
+matrix-free) to avoid repeated O(|G|) canonicalization; every lookup is a
+handful of array reads.
 
-- **Matrix mode**: rows are built single-threaded; the cache warms naturally
-  via `get!`, providing 3–10× speedup over uncached canonicalization.
-- **Distributed matrix mode**: each worker maintains its own cache copy;
-  columns are processed single-threaded per worker — no synchronisation needed.
-- **Matrix-free mode**: MUST be pre-populated via `populate_canonical_map!`
-  before the multi-threaded Lanczos loop; after population all `get_canonical`
-  calls are read-only Dict lookups, which are thread-safe without locks.
+`populate_canonical_map!` is kept as a no-op for API compatibility with
+the previous CanonicalMap design.
 """
 struct CanonicalMap
     symmetry_group::Finite_Symmetry_Group
     particle_statistics::Particle_Statistics
-    cache::Dict{Mask,Tuple{Mask,Int,ComplexF64}}   # scattered mask → canonical data
+    catalog::Symmetry_Orbit_Catalog  # precomputed representative tables
 end
 
-"O(1) canonical-representative lookup (falls back to O(|G|) on cache miss)"
+"O(1) canonical-representative lookup via the precomputed representative tables"
 @inline function get_canonical(cmap::CanonicalMap, m::Mask)::Tuple{Mask,Int,ComplexF64}
-    return get!(cmap.cache, m) do
-        get_canonical_representative(m, cmap.symmetry_group, cmap.particle_statistics)
+    cat = cmap.catalog
+    idx = cat.lin_n_right >= 0 ? lin_index(m, cat.lin_left, cat.lin_right, cat.lin_n_right) + 1 : rank_combination(m) + 1
+    rep_idx = cmap.catalog.rep_rank_table[idx]
+    if rep_idx == 0
+        # fallback for masks outside the fixed-filling basis (should not occur)
+        return get_canonical_representative(m, cmap.symmetry_group, cmap.particle_statistics)
     end
+    repr = cmap.catalog.representative_mask_list[rep_idx]
+    return repr, Int(cmap.catalog.rep_sym_table[idx]), ComplexF64(cmap.catalog.rep_amp_table[idx])
 end
 
 """
     populate_canonical_map!(cmap, basis, bilinear_terms)
 
-Single-threaded cache warmup: iterates every representative mask × every valid
-hopping move, calling `get_canonical` to populate the Dict.
-
-**Required before any multi-threaded use** (e.g., `apply_hamiltonian!` with
-`Threads.@threads`) because `get!` on a shared Dict is NOT thread-safe during
-concurrent writes.  After this call, all subsequent `get_canonical` lookups
-are pure Dict reads, which are safe across threads.
-
-For single-threaded matrix construction, this call is optional (the cache
-warms naturally during the column loop) but harmless.
+No-op kept for API compatibility with the previous CanonicalMap design:
+the representative tables (`rep_rank_table`/`rep_sym_table`/`rep_amp_table`)
+are precomputed once at catalog-build time (combinadic rank + LinTable), so
+there is no lazy Dict to warm.  All `get_canonical` lookups are O(1) array
+reads and thread-safe by construction.
 """
 function populate_canonical_map!(cmap::CanonicalMap, basis::Symmetry_Sector_Basis,
     bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}})
-    @inbounds for repr_mask in basis.representative_mask_list
-        for (i_from, i_to, _) in bilinear_terms
-            if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
-                new_mask = empty_site_for_mask(repr_mask, i_from)
-                new_mask = occupy_site_for_mask(new_mask, i_to)
-                get_canonical(cmap, new_mask)  # populates cache if not present
-            end
-        end
-    end
     return cmap
 end
 
@@ -471,7 +617,7 @@ end
 Project a scattered Fock mask `m` onto the symmetry-sector basis.
 
 1. Obtain canonical representative `(repr, g_idx, α)` via `CanonicalMap`
-   (O(1) cached, O(|G|) on first encounter).
+   (O(1): combinadic rank / LinTable + three array reads, no fallback).
 2. Look up the representative in the basis Dict.
 3. Return `(row_index, α · χ(g_idx)ˣ)` or `nothing` if the orbit does not
    belong to this irrep sector.
@@ -511,12 +657,123 @@ function _matrixfree_buffers(n::Int)
     return [zeros(ComplexF64, n) for _ in 1:Threads.maxthreadid()]
 end
 
+"""
+Build the Matrix-Free Projection Table
+---
+Precomputes, once per sector, the projected hopping amplitudes
+
+    H_elem = t · s_JW · α · χ(g)* · √(|Stab(row)| / |Stab(col)|)
+
+for every valid hopping move, stored as flat `(row, col, amplitude)`
+triplets together with the per-column diagonal (density-density)
+contribution.
+
+Each matrix-free `H·x` then becomes a pure gather–scatter kernel with
+**zero per-hop Dict lookups**, replacing the previous design in which
+every scattered mask was re-projected through the `CanonicalMap` Dict on
+every matvec (the Dict probe was the dominant cost of the matrix-free
+mode).  The table holds exactly the same information as the warmed
+`CanonicalMap` — in *less* memory — and is the direct analogue of the
+lookup structures used by state-of-the-art ED codes (e.g. XDiag's
+`StateInfo` arrays).
+"""
+function build_matrixfree_projection_table(
+    basis::Symmetry_Sector_Basis,
+    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
+    cmap::CanonicalMap,
+)
+    sector_dim = length(basis.representative_mask_list)
+    row_ind = Int[]
+    col_ind = Int[]
+    vals = ComplexF64[]
+    h_diag = zeros(ComplexF64, sector_dim)
+
+    # branch-free hop masks (XDiag trick 3a): occupancy gate = popcount(m &
+    # mask) == 1, action = m ⊻ mask
+    hop_masks = [bitmask_of_site(i_from) | bitmask_of_site(i_to) for (i_from, i_to, _) in bilinear_terms]
+    from_masks = [bitmask_of_site(i_from) for (i_from, _, _) in bilinear_terms]
+
+    @inbounds for (col, repr_mask) in enumerate(basis.representative_mask_list)
+        stab_col = basis.stabilizer_order_list[col]
+
+        H_diag = zero(ComplexF64)
+        for (i, j, V) in density_terms
+            if is_site_occupied(repr_mask, i) && is_site_occupied(repr_mask, j)
+                H_diag += V
+            end
+        end
+        h_diag[col] = H_diag
+
+        for (k, (i_from, i_to, t)) in enumerate(bilinear_terms)
+            if (repr_mask & hop_masks[k]) == from_masks[k]
+                new_mask = repr_mask ⊻ hop_masks[k]
+
+                proj = project_to_sector(new_mask, basis, cmap)
+                proj === nothing && continue
+
+                row, coeff = proj
+                stab_row = basis.stabilizer_order_list[row]
+                hop_phase = hopping_phase_for_stats(cmap.particle_statistics, repr_mask, i_from, i_to)
+                H_elem = t * hop_phase * coeff * sqrt(stab_row / stab_col)
+
+                push!(row_ind, row)
+                push!(col_ind, col)
+                push!(vals, H_elem)
+            end
+        end
+    end
+
+    return row_ind, col_ind, vals, h_diag
+end
+
+"Apply H·x from the precomputed projection table (edge-parallel, race-free)."
+function _apply_table!(y::Vector{ComplexF64}, x::Vector{ComplexF64},
+    row_ind::Vector{Int}, col_ind::Vector{Int}, vals::Vector{ComplexF64},
+    h_diag::Vector{ComplexF64}, y_threads::Vector{Vector{ComplexF64}})
+    n = length(x)
+    @assert length(y) == n
+
+    max_tid = Threads.maxthreadid()
+    length(y_threads) < max_tid && error("not enough thread-local buffers")
+    @inbounds for tid in 1:max_tid
+        fill!(y_threads[tid], 0)
+    end
+
+    # diagonal (density-density)
+    @inbounds for col in 1:n
+        tid = Threads.threadid()
+        x_col = x[col]
+        x_col == 0 && continue
+        y_threads[tid][col] += h_diag[col] * x_col
+    end
+
+    # off-diagonal edge scatter (x is read-only → race-free with per-thread buffers)
+    nnz = length(row_ind)
+    Threads.@threads :static for e in 1:nnz
+        tid = Threads.threadid()
+        x_col = x[col_ind[e]]
+        x_col == 0 && continue
+        y_threads[tid][row_ind[e]] += vals[e] * x_col
+    end
+
+    fill!(y, 0)
+    @inbounds for tid in 1:max_tid
+        y .+= y_threads[tid]
+    end
+    return y
+end
+
 struct MatrixFreeHamiltonian
     basis::Symmetry_Sector_Basis
     bilinear_terms::Vector{Tuple{Int,Int,ComplexF64}}
     density_terms::Vector{Tuple{Int,Int,ComplexF64}}
     cmap::CanonicalMap
     y_threads::Vector{Vector{ComplexF64}}
+    row_ind::Vector{Int}
+    col_ind::Vector{Int}
+    table_vals::Vector{ComplexF64}
+    h_diag::Vector{ComplexF64}
 end
 
 function MatrixFreeHamiltonian(
@@ -528,7 +785,9 @@ function MatrixFreeHamiltonian(
     n = length(basis.representative_mask_list)
     bilin = [(i, j, ComplexF64(t)) for (i, j, t) in bilinear_terms]
     density = [(i, j, ComplexF64(v)) for (i, j, v) in density_terms]
-    return MatrixFreeHamiltonian(basis, bilin, density, cmap, _matrixfree_buffers(n))
+    row_ind, col_ind, table_vals, h_diag = build_matrixfree_projection_table(basis, bilin, density, cmap)
+    return MatrixFreeHamiltonian(basis, bilin, density, cmap, _matrixfree_buffers(n),
+        row_ind, col_ind, table_vals, h_diag)
 end
 
 """
@@ -566,6 +825,10 @@ function apply_hamiltonian!(y::Vector{ComplexF64}, x::Vector{ComplexF64},
         fill!(y_threads[tid], 0)
     end
 
+    # branch-free hop masks (XDiag trick 3a)
+    hop_masks = [bitmask_of_site(i_from) | bitmask_of_site(i_to) for (i_from, i_to, _) in bilinear_terms]
+    from_masks = [bitmask_of_site(i_from) for (i_from, _, _) in bilinear_terms]
+
     Threads.@threads :static for col in 1:n
         tid = Threads.threadid()
         yt = y_threads[tid]
@@ -586,10 +849,9 @@ function apply_hamiltonian!(y::Vector{ComplexF64}, x::Vector{ComplexF64},
         yt[col] += H_diag * x_col
 
         # ── Off-diagonal (hopping) ──
-        for (i_from, i_to, t) in bilinear_terms
-            if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
-                new_mask = empty_site_for_mask(repr_mask, i_from)
-                new_mask = occupy_site_for_mask(new_mask, i_to)
+        for (k, (i_from, i_to, t)) in enumerate(bilinear_terms)
+            if (repr_mask & hop_masks[k]) == from_masks[k]
+                new_mask = repr_mask ⊻ hop_masks[k]
 
                 proj = project_to_sector(new_mask, basis, cmap)
                 proj === nothing && continue
@@ -617,7 +879,7 @@ end
 
 function (H::MatrixFreeHamiltonian)(x::Vector{ComplexF64})
     y = similar(x)
-    apply_hamiltonian!(y, x, H.basis, H.bilinear_terms, H.density_terms, H.cmap, H.y_threads)
+    _apply_table!(y, x, H.row_ind, H.col_ind, H.table_vals, H.h_diag, H.y_threads)
     return y
 end
 
@@ -655,6 +917,10 @@ function build_ed_Hamiltonian_symmetry_block(
     sizehint!(Js, sector_dim * est_nnz)
     sizehint!(Vs, sector_dim * est_nnz)
 
+    # branch-free hop masks (XDiag trick 3a)
+    hop_masks = [bitmask_of_site(i_from) | bitmask_of_site(i_to) for (i_from, i_to, _) in bilinear_terms]
+    from_masks = [bitmask_of_site(i_from) for (i_from, _, _) in bilinear_terms]
+
     res = @timed begin
         @inbounds for (col, repr_mask) in enumerate(basis.representative_mask_list)
             stab_col = basis.stabilizer_order_list[col]
@@ -671,10 +937,9 @@ function build_ed_Hamiltonian_symmetry_block(
             push!(Vs, H_diag)
 
             # Off-diagonal
-            for (i_from, i_to, t) in bilinear_terms
-                if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
-                    new_mask = empty_site_for_mask(repr_mask, i_from)
-                    new_mask = occupy_site_for_mask(new_mask, i_to)
+            for (k, (i_from, i_to, t)) in enumerate(bilinear_terms)
+                if (repr_mask & hop_masks[k]) == from_masks[k]
+                    new_mask = repr_mask ⊻ hop_masks[k]
                     proj = project_to_sector(new_mask, basis, cmap)
                     proj === nothing && continue
                     row, coeff = proj
@@ -713,15 +978,16 @@ end
 function diagonalize_block_arpack(H::SparseMatrixCSC{ComplexF64,Int}; nev::Int=5)
     n = size(H, 1)
     n == 0 && return Float64[], Matrix{ComplexF64}(undef, 0, 0)
-    # Temporarily set BLAS threads = nprocs() for diagonalization (HPC: one per worker)
-    blas_threads = max(1, nprocs())
+    # Temporarily set BLAS threads for diagonalization (multithreaded)
+    blas_threads = max(1, Threads.nthreads())
     BLAS.set_num_threads(blas_threads)
     try
         if n <= 500
             return diagonalize_block_dense(H; nev=nev)
         else
             vals, vecs, _ = Arpack.eigs(H; nev=nev, which=:SR)
-            return real.(vals), Matrix(vecs)
+            order = sortperm(real.(vals))
+            return real.(vals[order]), Matrix(vecs[:, order])
         end
     finally
         BLAS.set_num_threads(1)  # restore HPC default
@@ -731,8 +997,8 @@ end
 "Diagonalize using matrix-free Lanczos (KrylovKit)"
 function diagonalize_block_matrixfree(H_op!, n::Int; nev::Int=5)
     n == 0 && return Float64[], Matrix{ComplexF64}(undef, 0, 0)
-    # Temporarily set BLAS threads = nprocs() for diagonalization
-    blas_threads = max(1, nprocs())
+    # Temporarily set BLAS threads for diagonalization
+    blas_threads = max(1, Threads.nthreads())
     BLAS.set_num_threads(blas_threads)
     try
         if n <= 500
@@ -754,7 +1020,9 @@ function diagonalize_block_matrixfree(H_op!, n::Int; nev::Int=5)
             x0 = randn(ComplexF64, n)
             x0 ./= norm(x0)
             vals, vecs, info = KrylovKit.eigsolve(H_op!, x0, nev, :SR; tol=1e-10, maxiter=300)
-            return real.(vals), hcat(vecs...)
+            info.converged >= nev || error("Lanczos did not converge the requested $nev eigenpairs.")
+            order = sortperm(real.(vals))
+            return real.(vals[order]), hcat(vecs... )[:, order]
         end
     finally
         BLAS.set_num_threads(1)  # restore HPC default
@@ -805,16 +1073,11 @@ function ed_scan_at_irrep_matrix!(irrep_label, ed_data::Symmetry_Resolved_ED_Dat
     ed_data.sector_dims[irrep_idx] = length(basis.representative_mask_list)
 
     # ── Create CanonicalMap (shared across all matrix-construction paths) ──
-    cmap = CanonicalMap(ed_data.symmetry_group, particle_statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
+    cmap = CanonicalMap(ed_data.symmetry_group, particle_statistics, ed_data.orbit_catalog)
 
-    # Use distributed construction when workers are available (HPC)
-    if nprocs() > 1 && ed_data.sector_dims[irrep_idx] > 500
-        H = build_ed_Hamiltonian_symmetry_block_distributed(basis, ed_data.second_quantized_model.bilinear_terms,
-            ed_data.second_quantized_model.density_density_terms, cmap)
-    else
-        H = build_ed_Hamiltonian_symmetry_block(basis, ed_data.second_quantized_model.bilinear_terms,
-            ed_data.second_quantized_model.density_density_terms, cmap)
-    end
+    # Shared-memory threaded construction (Threads.@threads inside the block builder)
+    H = build_ed_Hamiltonian_symmetry_block(basis, ed_data.second_quantized_model.bilinear_terms,
+        ed_data.second_quantized_model.density_density_terms, cmap)
     vals, vecs = diagonalize_block_arpack(H; nev=nev)
     ed_data.ed_scan_res[irrep_idx] = (vals, vecs)
     H = nothing
@@ -827,7 +1090,7 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 function ed_scan_at_irrep_matrixfree!(irrep_label, ed_data::Symmetry_Resolved_ED_Data;
-    nev::Int=5, use_distributed::Bool=false)
+    nev::Int=5)
     irrep_idx = findfirst(irrep -> irrep.label == irrep_label, ed_data.irrep_list)
     @assert irrep_idx !== nothing
 
@@ -848,203 +1111,23 @@ function ed_scan_at_irrep_matrixfree!(irrep_label, ed_data::Symmetry_Resolved_ED
     density = ed_data.second_quantized_model.density_density_terms
 
     res = @timed begin
-        # Build and populate CanonicalMap
-        cmap = CanonicalMap(ed_data.symmetry_group, particle_statistics, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
+        # Build and populate CanonicalMap (tables prebuilt in the catalog)
+        cmap = CanonicalMap(ed_data.symmetry_group, particle_statistics, ed_data.orbit_catalog)
         populate_canonical_map!(cmap, basis, bilinear)
 
-        # Create the linear operator. The distributed variant avoids @everywhere;
-        # workers are loaded through ensure_distributed_workers_loaded!().
-        H_op, n = if use_distributed && nprocs() > 1
-            hamiltonian_linear_operator_distributed(basis, bilinear, density, cmap)
-        else
-            hamiltonian_linear_operator(basis, bilinear, density, cmap)
-        end
+        # Shared-memory linear operator (Threads.@threads matvec)
+        H_op, n = hamiltonian_linear_operator(basis, bilinear, density, cmap)
         vals, vecs = diagonalize_block_matrixfree(H_op, n; nev=nev)
     end
     printstyled("Done. t=$(round(res.time,digits=3))s\n", bold=true)
 
     ed_data.ed_scan_res[irrep_idx] = (vals, vecs)
     cmap = nothing
-    GC.gc(true)  # force GC after each sector (CanonicalMap can be large)
+    GC.gc(true)  # force GC after each sector to avoid memory pressure accumulation
     return vals, vecs
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 17. Distributed matrix construction (HPC: pmap across workers)
-# ═══════════════════════════════════════════════════════════════════════════
-
-"""
-    build_ed_Hamiltonian_symmetry_block_distributed(basis, bilinear, density, stats)
-        -> SparseMatrixCSC
-
-Build the Hamiltonian matrix using `Distributed.pmap`: each worker processes a
-chunk of the representative masks in parallel.  Used on HPC clusters where
-the matrix is too large to build on a single node.
-"""
-function build_ed_Hamiltonian_symmetry_block_distributed(
-    basis::Symmetry_Sector_Basis,
-    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
-    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
-    cmap::CanonicalMap,
-)::SparseMatrixCSC{ComplexF64,Int}
-    sector_dim = length(basis.representative_mask_list)
-    if sector_dim == 0
-        return spzeros(ComplexF64, Int, 0, 0)
-    end
-    if nprocs() == 1
-        return build_ed_Hamiltonian_symmetry_block(basis, bilinear_terms, density_terms, cmap)
-    end
-    ensure_distributed_workers_loaded!()
-
-    nw = nworkers()
-    chunk_size = cld(sector_dim, nw)
-    col_ranges = [r[1]:r[end] for r in Iterators.partition(1:sector_dim, chunk_size)]
-    pool = CachingPool(workers())
-
-    print("\tBuilding H block (distributed, $nw workers) @ irrep $(basis.irrep.label) (dim=$sector_dim) ... ")
-
-    res = @timed begin
-        results = pmap(pool, col_ranges) do rng
-            Is = Int[]
-            Js = Int[]
-            Vs = ComplexF64[]
-            est_nnz = 1 + 4 * basis.symmetry_group.n_site
-            sizehint!(Is, length(rng) * est_nnz)
-            sizehint!(Js, length(rng) * est_nnz)
-            sizehint!(Vs, length(rng) * est_nnz)
-            @inbounds for col in rng
-                repr_mask = basis.representative_mask_list[col]
-                stab_col = basis.stabilizer_order_list[col]
-                H_diag = zero(ComplexF64)
-                for (i, j, V) in density_terms
-                    if is_site_occupied(repr_mask, i) && is_site_occupied(repr_mask, j)
-                        H_diag += V
-                    end
-                end
-                push!(Is, col)
-                push!(Js, col)
-                push!(Vs, H_diag)
-                for (i_from, i_to, t) in bilinear_terms
-                    if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
-                        new_mask = empty_site_for_mask(repr_mask, i_from)
-                        new_mask = occupy_site_for_mask(new_mask, i_to)
-                        proj = project_to_sector(new_mask, basis, cmap)
-                        proj === nothing && continue
-                        row, coeff = proj
-                        stab_row = basis.stabilizer_order_list[row]
-                        hop_phase = hopping_phase_for_stats(cmap.particle_statistics, repr_mask, i_from, i_to)
-                        H_elem = t * hop_phase * coeff * sqrt(stab_row / stab_col)
-                        push!(Is, row)
-                        push!(Js, col)
-                        push!(Vs, H_elem)
-                    end
-                end
-            end
-            return (Is, Js, Vs)
-        end
-    end
-
-    Is = reduce(vcat, getindex.(results, 1))
-    Js = reduce(vcat, getindex.(results, 2))
-    Vs = reduce(vcat, getindex.(results, 3))
-    H = sparse(Is, Js, Vs, sector_dim, sector_dim)
-    dropzeros!(H)
-    GC.gc(true)
-
-    nnz_H = nnz(H)
-    sparsity = sector_dim == 0 ? 0.0 : nnz_H / (sector_dim^2)
-    printstyled("Done. nnz=$nnz_H, sparsity=$(round(sparsity,digits=6)). t=$(round(res.time,digits=3))s\n", bold=true)
-    return H
-end
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 17c. Distributed matrix-free H|ψ⟩ (HPC: pmap column chunks)
-# ═══════════════════════════════════════════════════════════════════════════
-
-"""
-    apply_hamiltonian_distributed!(y, x, basis, bilinear, density, cmap)
-
-Distributed variant of `apply_hamiltonian!`: each worker computes its chunk
-of columns, partial results are reduced on the master.
-
-The `cmap` is broadcast to all workers so they can look up canonical
-representatives without network round-trips.
-"""
-function apply_hamiltonian_distributed!(y::Vector{ComplexF64}, x::Vector{ComplexF64},
-    basis::Symmetry_Sector_Basis,
-    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
-    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
-    cmap::CanonicalMap)
-    n = length(x)
-    if nprocs() == 1
-        return apply_hamiltonian!(y, x, basis, bilinear_terms, density_terms, cmap)
-    end
-    nw = nworkers()
-    ensure_distributed_workers_loaded!()
-
-    chunk_size = cld(n, nw)
-    col_ranges = [r[1]:r[end] for r in Iterators.partition(1:n, chunk_size)]
-    pool = CachingPool(workers())
-
-    results = pmap(pool, col_ranges) do rng
-        y_part = zeros(ComplexF64, n)
-        @inbounds for col in rng
-            x_col = x[col]
-            x_col == 0 && continue
-            repr_mask = basis.representative_mask_list[col]
-            stab_col = basis.stabilizer_order_list[col]
-            inv_sqrt_stab_col = 1.0 / sqrt(stab_col)
-
-            H_diag = zero(ComplexF64)
-            for (i, j, V) in density_terms
-                if is_site_occupied(repr_mask, i) && is_site_occupied(repr_mask, j)
-                    H_diag += V
-                end
-            end
-            y_part[col] += H_diag * x_col
-
-            for (i_from, i_to, t) in bilinear_terms
-                if is_site_occupied(repr_mask, i_from) && is_site_empty(repr_mask, i_to)
-                    new_mask = empty_site_for_mask(repr_mask, i_from)
-                    new_mask = occupy_site_for_mask(new_mask, i_to)
-                    proj = project_to_sector(new_mask, basis, cmap)
-                    proj === nothing && continue
-                    row, coeff = proj
-                    stab_row = basis.stabilizer_order_list[row]
-                    hop_phase = hopping_phase_for_stats(cmap.particle_statistics, repr_mask, i_from, i_to)
-                    H_elem = t * hop_phase * coeff * sqrt(stab_row) * inv_sqrt_stab_col
-                    y_part[row] += H_elem * x_col
-                end
-            end
-        end
-        return y_part
-    end
-
-    fill!(y, 0)
-    for yp in results
-        y .+= yp
-    end
-    return y
-end
-
-"""
-    hamiltonian_linear_operator_distributed(basis, bilinear, density, cmap)
-
-Return a distributed linear operator `H_op(x) -> y` using `pmap` column chunks.
-"""
-function hamiltonian_linear_operator_distributed(basis::Symmetry_Sector_Basis,
-    bilinear_terms::Vector{<:Tuple{Int,Int,<:Number}},
-    density_terms::Vector{<:Tuple{Int,Int,<:Number}},
-    cmap::CanonicalMap)
-    n = length(basis.representative_mask_list)
-    function H_op(x::Vector{ComplexF64})
-        y = similar(x)
-        fill!(y, 0)
-        apply_hamiltonian_distributed!(y, x, basis, bilinear_terms, density_terms, cmap)
-        return y
-    end
-    return H_op, n
-end
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 17d. Checkpoint support (HPC preemption resilience)
@@ -1058,7 +1141,8 @@ function save_checkpoint(ed_data::Symmetry_Resolved_ED_Data, path::String)::Noth
     # an uncatchable SIGKILL while preserving the previous checkpoint.
     temp_path = path * ".tmp"
     try
-        @save temp_path ed_data
+        solver_revision = 2
+        @save temp_path ed_data solver_revision
         mv(temp_path, path; force=true)
     finally
         isfile(temp_path) && rm(temp_path; force=true)
@@ -1068,8 +1152,11 @@ end
 
 "Load ED data from a checkpoint file"
 function load_checkpoint(path::String)::Symmetry_Resolved_ED_Data
-    @load path ed_data
-    return ed_data
+    return jldopen(path, "r") do file
+        get(file, "solver_revision", 0) == 2 || error(
+            "Legacy ED checkpoint $path: recompute with overwrite=true (flux/projection fix).")
+        file["ed_data"]
+    end
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1081,19 +1168,31 @@ Generate the Universal Checkpoint Filename for ED Scan
 ---
 for both conventional scan and flux-insertion scan. The format reads `{tb_model.model_name}_{sample_size}_ν_graph={num}_{den}_twisted_phases_over_2π_{twisted_phases_over_2π}_params={params_short}.jld2`.
 
-Here `params_short` just round ALL values of `params` to 3 digits.
+The parameter digest uses full precision; rounding parameters aliases distinct models.
 """
 function ed_scan_checkpoint_filename(
     model::Real_Space_Second_Quantized_Model,
     twisted_phases_over_2π::AbstractVector{<:Real},
     filling_fraction::Rational{Int},
 )::String
-    params_short = Dict{keytype(model.params),valtype(model.params)}()
-    for (k, v) in model.params
-        params_short[k] = round(v; digits=3)
+    h = UInt64(0xcbf29ce484222325)
+    for byte in codeunits(repr(sort(collect(model.params);by=x->string(first(x)))))
+        h = (h ⊻ UInt64(byte)) * UInt64(0x00000100000001b3)
     end
+    return "solver_v2_$(model.tb_model.model_name)_$(model.lattice.sample_size)_nu=$(numerator(filling_fraction))_$(denominator(filling_fraction))_flux=$(twisted_phases_over_2π)_p=$(string(h;base=16)).jld2"
+end
 
-    return "$(model.tb_model.model_name)_$(model.lattice.sample_size)_ν_graph=$(numerator(filling_fraction))_$(denominator(filling_fraction))_twisted_phases_over_2π=$(twisted_phases_over_2π)_params=$(params_short).jld2"
+function _same_flux_problem(a, b)
+    a.params == b.params && a.lattice.sample_size == b.lattice.sample_size &&
+    a.lattice.twisted_phases_over_2π == b.lattice.twisted_phases_over_2π &&
+    typeof(a.particle_statistics) == typeof(b.particle_statistics) || return false
+    key(t) = (t[1],t[2],real(t[3]),imag(t[3]))
+    for (aa,bb) in ((a.bilinear_terms,b.bilinear_terms),(a.density_density_terms,b.density_density_terms))
+        length(aa)==length(bb) || return false
+        all(x[1]==y[1] && x[2]==y[2] && isapprox(x[3],y[3];atol=1e-12,rtol=1e-12)
+            for (x,y) in zip(sort(aa;by=key),sort(bb;by=key))) || return false
+    end
+    return true
 end
 
 "_Internal_: scan sectors of `ed_data` for optionally provided `scanned_sectors`"
@@ -1101,31 +1200,47 @@ function _ed_scan_sectors!(ed_data::Symmetry_Resolved_ED_Data;
     nev::Int=5,
     mode::Symbol=:matrix,
     checkpoint_path::Union{String,Nothing}=nothing,
-    use_distributed::Bool=true,
     scanned_sectors::Union{Nothing,Vector{<:Tuple{Int,Int}}}=nothing,
     overwrite::Bool=false,
+    _checkpoint_loaded::Bool=false,
 )::Union{String,Nothing}
-    # Resume from existing checkpoint if not overwriting
-    if checkpoint_path !== nothing && isfile(checkpoint_path) && !overwrite
+    if overwrite
+        empty!(ed_data.ed_scan_res)
+    elseif checkpoint_path !== nothing && isfile(checkpoint_path) && !_checkpoint_loaded
         @info "Loading existing checkpoint: $(checkpoint_path)"
         loaded = load_checkpoint(checkpoint_path)
+        current_labels = [irrep.label for irrep in ed_data.irrep_list]
+        loaded_labels = [irrep.label for irrep in loaded.irrep_list]
+        if loaded.n_filled != ed_data.n_filled ||
+           loaded.filling_fraction != ed_data.filling_fraction ||
+           loaded_labels != current_labels ||
+           !_same_flux_problem(loaded.second_quantized_model, ed_data.second_quantized_model)
+            error("ED checkpoint is incompatible with the requested filling or symmetry-sector labels.")
+        end
         ed_data.ed_scan_res = loaded.ed_scan_res
-        return checkpoint_path
+        ed_data.sector_dims = loaded.sector_dims
     end
     n_total = length(ed_data.irrep_list)
     n_done = length(ed_data.ed_scan_res)
     n_done > 0 && println("[ED scan] $(n_done)/$(n_total) sectors already computed; resuming.")
 
     for (irrep_idx, irrep) in enumerate(ed_data.irrep_list)
-        haskey(ed_data.ed_scan_res, irrep_idx) && continue
         # If sector filter is provided, skip sectors not in the list
         if scanned_sectors !== nothing && !(irrep.label in scanned_sectors)
             continue
         end
+        if haskey(ed_data.ed_scan_res, irrep_idx)
+            cached_nev = length(ed_data.ed_scan_res[irrep_idx][1])
+            sector_dim = ed_data.sector_dims[irrep_idx]
+            if sector_dim == 0 || cached_nev >= min(nev, sector_dim)
+                continue
+            end
+            println("[ED scan] Recomputing irrep $(irrep.label): checkpoint contains nev=$cached_nev, requested nev=$nev.")
+        end
         println("[ED scan] Sector $(irrep_idx)/$(n_total) — irrep $(irrep.label)  [mode=$mode]")
         flush(stdout)
         if mode == :matrixfree
-            ed_scan_at_irrep_matrixfree!(irrep.label, ed_data; nev=nev, use_distributed=use_distributed)
+            ed_scan_at_irrep_matrixfree!(irrep.label, ed_data; nev=nev)
         elseif mode == :matrix
             ed_scan_at_irrep_matrix!(irrep.label, ed_data; nev=nev)
         else
@@ -1141,6 +1256,27 @@ function _ed_scan_sectors!(ed_data::Symmetry_Resolved_ED_Data;
 end
 
 """
+    resume_ed_scan!(checkpoint_path; nev=5, mode=:matrix, scanned_sectors=nothing,
+                    overwrite=false)
+
+Load a saved ED data object before constructing any symmetry-orbit catalog,
+then continue all missing or undersized sectors with per-sector checkpoints.
+Use this entry point whenever a checkpoint may already exist.
+"""
+function resume_ed_scan!(checkpoint_path::String;
+    nev::Int=5,
+    mode::Symbol=:matrix,
+    scanned_sectors::Union{Nothing,Vector{<:Tuple{Int,Int}}}=nothing,
+    overwrite::Bool=false,
+)::Symmetry_Resolved_ED_Data
+    isfile(checkpoint_path) || error("ED checkpoint does not exist: $checkpoint_path")
+    ed_data = load_checkpoint(checkpoint_path)
+    _ed_scan_sectors!(ed_data; nev, mode, checkpoint_path, scanned_sectors,
+        overwrite, _checkpoint_loaded=true)
+    return ed_data
+end
+
+"""
 Unified API for ED Scan 
 ---
 with support of flux-insertion scan and checkpoint resume.
@@ -1149,7 +1285,6 @@ with support of flux-insertion scan and checkpoint resume.
 - Named Args:
     - `nev::Int=5`: number of eigenvalues/eigenvectors to compute for each sector.
     - `mode::Symbol=:matrix`: the ED mode, can be `:matrix`
-    - `use_distributed::Bool=true`: enable distributed computation via `pmap`.
     - `scanned_sectors::Union{Nothing,Vector{Tuple{Int,Int}}}=nothing`: filter for specific sector labels.
     - `checkpoint_path::Union{String,Nothing}=nothing`: path to the checkpoint file to resume from. If a checkpoint file exists, resume scanning from the last saved state.
     - `flux_direction::Int=1`: for flux-insertion scans, the direction of the twisted boundary condition
@@ -1162,7 +1297,6 @@ Returns:
 function ed_scan!(ed_data::Symmetry_Resolved_ED_Data;
     nev::Int=5,
     mode::Symbol=:matrix,
-    use_distributed::Bool=true,
     scanned_sectors::Union{Nothing,Vector{<:Tuple{Int,Int}}}=nothing, # sector-specific scan support
     # checkpoint support
     checkpoint_path::Union{String,Nothing}=nothing,
@@ -1175,7 +1309,7 @@ function ed_scan!(ed_data::Symmetry_Resolved_ED_Data;
     @assert mode in [:matrix, :matrixfree]
 
     if twisted_phases_over_2π_list === nothing # fallback to conventional ED scan
-        ckpt_path = _ed_scan_sectors!(ed_data; nev, mode, checkpoint_path, use_distributed, scanned_sectors, overwrite)
+        ckpt_path = _ed_scan_sectors!(ed_data; nev, mode, checkpoint_path, scanned_sectors, overwrite)
         if isnothing(ckpt_path)
             return nothing
         else
@@ -1194,20 +1328,26 @@ function ed_scan!(ed_data::Symmetry_Resolved_ED_Data;
         flux = zeros(Float64, dim)
         flux[flux_direction] = θ_val
 
+        update_second_quantized_model_with_twisted_phases!(model; twisted_phases_over_2π=flux)
         ckpt_name = ed_scan_checkpoint_filename(model, flux, filling_fraction)
+        ed_data.symmetry_group.name == "identity" && (ckpt_name = "identity_" * ckpt_name)
         ckpt_path = joinpath(checkpoint_dir, ckpt_name)
 
         if isfile(ckpt_path) && !overwrite
-            @info "Skipping θ=$θ_val — checkpoint exists: $ckpt_name"
+            @info "Resuming θ=$θ_val from checkpoint: $ckpt_name"
+            cached = load_checkpoint(ckpt_path)
+            _same_flux_problem(cached.second_quantized_model,model) || error("Flux checkpoint belongs to a different Hamiltonian.")
+            resume_ed_scan!(ckpt_path; nev, mode, scanned_sectors)
             push!(checkpoint_paths, ckpt_path)
             continue
         end
 
         update_second_quantized_model_with_twisted_phases!(model; twisted_phases_over_2π=flux)
-        active_group = build_translation_group(model.lattice, flux)
+        active_group = ed_data.symmetry_group.name == "identity" ?
+            build_identity_group(model.lattice.n_site) : build_translation_group(model.lattice, flux)
         θ_ed_data = build_ed_data(model; filling_fraction=filling_fraction, symmetry_group=active_group)
-        _ed_scan_sectors!(θ_ed_data; nev, mode, use_distributed, scanned_sectors, overwrite)
-        save_checkpoint(θ_ed_data, ckpt_path)
+        _ed_scan_sectors!(θ_ed_data; nev, mode, checkpoint_path=ckpt_path,
+            scanned_sectors, overwrite)
         @info "Saved ED scan @ θ=$θ_val → $ckpt_name"
         push!(checkpoint_paths, ckpt_path)
     end

@@ -19,6 +19,7 @@ end
 
 function _chern_sector_labels(sector_labels)
     sector_labels == :identity && return [:identity]
+    sector_labels isa Tuple && return [Tuple(Int.(sector_labels))]
     return [Tuple(Int.(label)) for label in sector_labels]
 end
 
@@ -73,8 +74,7 @@ function _unit_det_link(states_a, states_b; det_atol::Float64=1e-10)
     M = _subspace_overlap_matrix(states_a, states_b)
     z = det(M)
     if abs(z) <= det_atol
-        @warn "Near-singular Berry link; selected manifold may not be isolated." abs_det=abs(z)
-        return one(ComplexF64), abs(z)
+        error("Singular Berry link (|det|=$(abs(z))); refine the grid or select an isolated manifold.")
     end
     return z / abs(z), abs(z)
 end
@@ -85,6 +85,7 @@ function _flux_point_states_for_chern(
     filling_fraction::Rational{Int},
     flux::Vector{Float64},
     nev_per_sector::Int,
+    manifold_size::Int,
     mode::Symbol,
     checkpoint_dir::String,
     overwrite::Bool,
@@ -95,10 +96,12 @@ function _flux_point_states_for_chern(
         build_translation_group(model.lattice, flux)
     ed_data = build_ed_data(model; filling_fraction=filling_fraction, symmetry_group=active_group)
 
-    scanned = labels == [:identity] ? nothing : Tuple{Int,Int}[label for label in labels]
-    checkpoint_path = _chern_checkpoint_path(model, filling_fraction, flux, checkpoint_dir)
+    # Global low-energy selection must consider every momentum sector.
+    scanned = nothing
+    checkpoint_path = _chern_checkpoint_path(model, filling_fraction, flux,
+        joinpath(checkpoint_dir,labels == [:identity] ? "solver_v2_identity" : "solver_v2_sectors"))
     ed_scan!(ed_data;
-        nev=nev_per_sector,
+        nev=manifold_size + 1,
         mode=mode,
         scanned_sectors=scanned,
         checkpoint_path=checkpoint_path,
@@ -109,28 +112,22 @@ function _flux_point_states_for_chern(
     energies = Float64[]
     sector_level_labels = Tuple[]
 
-    for label in labels
-        irrep_idx = label == :identity ? 1 :
-            findfirst(irrep -> irrep.label == label, ed_data.irrep_list)
-        irrep_idx === nothing && error("Sector $(repr(label)) not found at flux $(flux).")
-        haskey(ed_data.ed_scan_res, irrep_idx) ||
-            error("Sector $(repr(label)) was not scanned at flux $(flux).")
-
-        vals, vecs = ed_data.ed_scan_res[irrep_idx]
-        n_take = min(nev_per_sector, size(vecs, 2))
-        n_take == nev_per_sector ||
-            error("Requested $nev_per_sector states in sector $(repr(label)), only found $n_take.")
-        basis = build_symmetry_sector_basis(ed_data.orbit_catalog, ed_data.irrep_list[irrep_idx])
-
-        for level in 1:n_take
-            push!(states, _expand_sector_state_to_fock_amplitudes(
-                vecs[:, level], basis, model.particle_statistics))
-            push!(energies, Float64(vals[level]))
-            push!(sector_level_labels, (label, level))
-        end
+    candidates = sort([(energy=Float64(vals[level]), idx=idx, level=level)
+        for (idx, (vals, _)) in ed_data.ed_scan_res for level in eachindex(vals)]; by=x->x.energy)
+    length(candidates) > manifold_size || error("Need a state above the selected manifold to check its gap.")
+    gap = candidates[manifold_size+1].energy - candidates[manifold_size].energy
+    gap > 1e-9 || error("Low-energy manifold is not isolated at flux $flux (gap=$gap).")
+    for state in candidates[1:manifold_size]
+        irrep = ed_data.irrep_list[state.idx]
+        basis = build_symmetry_sector_basis(ed_data.orbit_catalog, irrep)
+        vecs = ed_data.ed_scan_res[state.idx][2]
+        push!(states, _expand_sector_state_to_fock_amplitudes(
+            vecs[:, state.level], basis, model.particle_statistics))
+        push!(energies, state.energy)
+        push!(sector_level_labels, (irrep.label, state.level))
     end
 
-    return (; states, energies, sector_level_labels, checkpoint_path)
+    return (; states, energies, sector_level_labels, checkpoint_path, gap)
 end
 
 function _plot_many_body_chern_curvature(result; fig_path::Union{Nothing,String}=nothing)
@@ -155,7 +152,11 @@ end
 
 Compute the Chern number of a selected many-body manifold on the two-dimensional
 twisted-boundary flux torus.  `sector_labels` is the set of momentum sectors
-whose lowest `nev_per_sector` states define the manifold at each flux point.
+used to infer the manifold dimension (`length(sector_labels)*nev_per_sector`).
+At every flux all sectors are solved and the globally lowest `manifold_size`
+states are selected. Use `:all` with explicit `manifold_size` for clarity.
+Singular links and a closed isolation gap raise errors. Boundary-gauge Fock
+states are periodic, so no extra sewing transformation is applied at the seam.
 
 The algorithm uses the gauge-invariant non-Abelian lattice Berry curvature:
 the U(1) link variable is the phase of the determinant of the overlap matrix
@@ -168,6 +169,7 @@ function many_body_chern_number(
     filling_fraction::Rational{Int},
     flux_grid_size=(5, 5),
     nev_per_sector::Int=1,
+    manifold_size::Union{Nothing,Int}=nothing,
     mode::Symbol=:matrix,
     checkpoint_dir::String="checkpoints",
     overwrite::Bool=false,
@@ -176,7 +178,10 @@ function many_body_chern_number(
 )
     model.lattice.dim == 2 || error("many_body_chern_number currently expects a 2D lattice.")
     nx, ny = _normalize_flux_grid_size(flux_grid_size)
-    labels = _chern_sector_labels(sector_labels)
+    labels = sector_labels == :all ? [irrep.label for irrep in build_translation_irrep_list(build_translation_group(model.lattice),model.lattice)] : _chern_sector_labels(sector_labels)
+    sector_labels == :all && manifold_size === nothing && error("Specify manifold_size with :all.")
+    nstates = manifold_size === nothing ? length(labels)*nev_per_sector : manifold_size
+    nstates > 0 || error("manifold_size must be positive.")
 
     flux_x = collect(0:(nx - 1)) ./ nx
     flux_y = collect(0:(ny - 1)) ./ ny
@@ -184,6 +189,8 @@ function many_body_chern_number(
     energies = Array{Vector{Float64},2}(undef, nx, ny)
     checkpoint_paths = Array{String,2}(undef, nx, ny)
 
+    gaps = zeros(nx,ny)
+    selected_states = Array{Vector{Tuple},2}(undef,nx,ny)
     mkpath(checkpoint_dir)
     for ix in 1:nx, iy in 1:ny
         flux = [Float64(flux_x[ix]), Float64(flux_y[iy])]
@@ -193,10 +200,13 @@ function many_body_chern_number(
             filling_fraction=filling_fraction,
             flux=flux,
             nev_per_sector=nev_per_sector,
+            manifold_size=nstates,
             mode=mode,
             checkpoint_dir=checkpoint_dir,
             overwrite=overwrite,
         )
+        gaps[ix, iy] = point.gap
+        selected_states[ix, iy] = point.sector_level_labels
         states[ix, iy] = point.states
         energies[ix, iy] = point.energies
         checkpoint_paths[ix, iy] = point.checkpoint_path
@@ -226,6 +236,8 @@ function many_body_chern_number(
     chern_number = sum(berry_curvature) / (2π)
     res = (;
         chern_number,
+        manifold_size=nstates,
+        gaps, min_gap=minimum(gaps), selected_states,
         rounded_chern=round(Int, chern_number),
         berry_curvature,
         flux_x,

@@ -14,14 +14,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 JULIA_BIN="${JULIA_BIN:-/mmfs1/gscratch/cmt/hxd/opt/julia-1.12.6/bin/julia}"
 JULIA_DEPOT="${JULIA_DEPOT:-/mmfs1/gscratch/cmt/hxd/julia_depot}"
-JULIA_PROJECT_DIR="${JULIA_PROJECT_DIR:-${JULIA_DEPOT}/environments/v1.12}"
+JULIA_PROJECT_DIR="${JULIA_PROJECT_DIR:-${REPO_DIR}}"
 TIGHTBINDING_DIR="${TIGHTBINDING_DIR:-$(dirname "${REPO_DIR}")/TightBinding}"
 ACCOUNT="cmt"
 PARTITION="ckpt-g2"
 WALLTIME="04:00:00"
 MAIL_USER="hxd.phys@outlook.com"
 REPO_REVISION="$(git -C "${REPO_DIR}" rev-parse --short=8 HEAD 2>/dev/null || printf 'working')"
-SETUP_JOB_NAME="tpp_env_${REPO_REVISION}"
+SETUP_JOB_NAME="tpp_env_threads_v2_${REPO_REVISION}"
 
 # One generated Slurm script is one independently resumable data point. The
 # generated submission helper calls `sbatch` in a loop; `sbatch` returns
@@ -55,10 +55,25 @@ CHARACTERISTIC_POINTS=(
 SWEEP_GEOMETRIES=(3x4 3x5 3x6)
 DIAGNOSTIC_GEOMETRIES=(3x4 3x5 3x6)
 GAP_GEOMETRIES=(3x3 3x4 3x5 3x6 3x7)
-FLOW_CYCLES=1
-FLOW_STEPS=21
-PUMP_STEPS=21
-DIAGNOSTIC_PROTOCOL="characteristic_points_v8_structure_flow${FLOW_STEPS}_pump${PUMP_STEPS}_pes_fci_only"
+# Flux values are in units of 2π. Include both endpoints: 17 points = 16 intervals.
+FLOW_CYCLES="${FLOW_CYCLES:-1}"
+PUMP_CYCLES="${PUMP_CYCLES:-1}"
+FLOW_STEPS="${FLOW_STEPS:-17}"
+PUMP_STEPS="${PUMP_STEPS:-17}"
+FLUX_DIRECTION="${FLUX_DIRECTION:-1}"
+POLARIZATION_DIRECTION="${POLARIZATION_DIRECTION:-2}"
+# The rerun campaign targets flow and pump. Set to all to also refresh S(q)/PES.
+DIAGNOSTIC_OBSERVABLES="${DIAGNOSTIC_OBSERVABLES:-flow,pump}"
+[[ "${DIAGNOSTIC_OBSERVABLES}" == "flow,pump" || "${DIAGNOSTIC_OBSERVABLES}" == "all" ]] || {
+  echo 'DIAGNOSTIC_OBSERVABLES must be flow,pump or all' >&2; exit 2;
+}
+for count in "${FLOW_STEPS}" "${PUMP_STEPS}"; do
+  [[ "${count}" =~ ^[0-9]+$ ]] && (( count >= 2 )) || {
+    echo 'Flux point counts must be integers >= 2' >&2; exit 2;
+  }
+done
+DIAGNOSTIC_PROTOCOL="diagnostics_v11_${DIAGNOSTIC_OBSERVABLES//,/_}_flow${FLOW_STEPS}_cycles${FLOW_CYCLES}_pump${PUMP_STEPS}_cycles${PUMP_CYCLES}_dir${FLUX_DIRECTION}_pol${POLARIZATION_DIRECTION}"
+DIAGNOSTIC_JOB_TAG="$(printf '%s' "${DIAGNOSTIC_PROTOCOL}" | cksum | awk '{print $1}')"
 GAP_PROTOCOL="characteristic_points_v6_all_candidates"
 
 GENERATED_DIR="${SCRIPT_DIR}/generated"
@@ -128,43 +143,18 @@ resource_for() {
     *) echo "Unknown geometry ${geometry}" >&2; exit 2 ;;
   esac
 
-  # Explicit sparse matrices are substantially faster for every currently
-  # tractable 3xL cluster.  Allocate one Julia process per Slurm task so the
-  # Hamiltonian columns are constructed with Distributed.pmap.
-  if [[ "${geometry}" == "3x3" ]]; then
-    MODE="matrix"
-    NTASKS=2
-    WALLTIME="01:00:00"
-  elif [[ "${geometry}" == "3x4" ]]; then
-    MODE="matrix"
-    NTASKS=12
-    WALLTIME="01:00:00"
-  elif [[ "${geometry}" == "3x5" ]]; then
-    MODE="matrix"
-    NTASKS=24
-    WALLTIME="02:00:00"
-  elif [[ "${geometry}" == "3x6" ]]; then
-    MODE="matrix"
-    NTASKS=48
-    WALLTIME="04:00:00"
-  elif [[ "${geometry}" == "3x7" ]]; then
-    # Matrix-free allocates one sector-sized accumulation buffer per Julia
-    # thread and a large canonical-map cache. That exceeded 72 GiB already
-    # in the N0 sector. Use the resumable Distributed.pmap sparse-matrix path
-    # for all three particle-number sectors and leave headroom for N0+1.
-    MODE="matrix"
-    NTASKS=84
-    WALLTIME="08:00:00"
-  elif [[ "${geometry}" == "4x6" ]]; then
-    # Matrix-free H|psi> is shared-memory threaded.  Use one Julia process
-    # with many threads; spawning many one-thread processes would leave the
-    # matrix-free kernel effectively serial and duplicate large basis data.
-    MODE="matrixfree"
-    NTASKS=1
-    CPUS_PER_TASK=216
-    JULIA_THREADS=216
-    WALLTIME="08:00:00"
-  fi
+  # The current ED engine uses shared-memory threads for both solver modes.
+  # One process owns the orbit catalog; every allocated CPU is a Julia thread.
+  case "${geometry}" in
+    3x3) CPUS_PER_TASK=2; WALLTIME="01:00:00" ;;
+    3x4) CPUS_PER_TASK=12; WALLTIME="01:00:00" ;;
+    3x5) CPUS_PER_TASK=24; WALLTIME="02:00:00" ;;
+    3x6) CPUS_PER_TASK=48; WALLTIME="04:00:00" ;;
+    3x7) CPUS_PER_TASK=84; WALLTIME="08:00:00" ;;
+    4x6) MODE="matrixfree"; CPUS_PER_TASK=216; WALLTIME="08:00:00" ;;
+  esac
+  JULIA_THREADS="${CPUS_PER_TASK}"
+
 }
 
 write_header() {
@@ -178,7 +168,7 @@ write_header() {
 #SBATCH --job-name=${job_name}
 #SBATCH --time=${WALLTIME}
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=${NTASKS}
+#SBATCH --ntasks=${NTASKS}
 #SBATCH --cpus-per-task=${CPUS_PER_TASK}
 #SBATCH --mem=${MEM_GB}G
 #SBATCH --chdir=${REPO_DIR}
@@ -207,7 +197,7 @@ echo "Solver: ${MODE}"
 echo "Resources: tasks=\${SLURM_NTASKS:-unknown} cpus_per_task=\${SLURM_CPUS_PER_TASK:-unknown} julia_threads=\${JULIA_NUM_THREADS} memory=${MEM_GB}G"
 [[ -d "${REPO_DIR}" ]] || { echo "Missing repository: ${REPO_DIR}" >&2; exit 2; }
 [[ -f "${REPO_DIR}/Project.toml" ]] || { echo "Missing Project.toml under ${REPO_DIR}" >&2; exit 2; }
-[[ -f "${JULIA_PROJECT_DIR}/Project.toml" ]] || { echo "Missing shared Julia environment: ${JULIA_PROJECT_DIR}" >&2; exit 2; }
+[[ -f "${JULIA_PROJECT_DIR}/Project.toml" ]] || { echo "Missing Julia project: ${JULIA_PROJECT_DIR}" >&2; exit 2; }
 [[ -x "${JULIA_BIN}" ]] || { echo "Julia is not executable: ${JULIA_BIN}" >&2; exit 2; }
 "${JULIA_BIN}" --version
 
@@ -299,26 +289,27 @@ for geometry in "${DIAGNOSTIC_GEOMETRIES[@]}"; do
     result_point_tag="tpp_$(result_value_tag "${tpp}")"
     result_dir="${REPO_DIR}/phase_exploration/results/diagnostics/${phase}/${geometry}/${result_point_tag}"
     job="${GENERATED_DIR}/diagnostics_${geometry}_${phase_lower}_tpp_${point_tag}.sbatch"
-    diagnostic_observables="structure,flow,pump"
-    required_pes_line=""
-    if [[ "${phase}" == "FCI" ]]; then
-      diagnostic_observables+=",pes"
-      required_pes_line="# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/particle_entanglement_spectrum.csv"
+    diagnostic_observables="flow,pump"
+    required_extra_lines=""
+    if [[ "${DIAGNOSTIC_OBSERVABLES}" == "all" ]]; then
+      diagnostic_observables="structure,flow,pump"
+      for name in structure_ground_allowed structure_ground_dense structure_ground_metrics \
+          structure_manifold_allowed structure_manifold_dense structure_manifold_metrics \
+          structure_manifold_state_metrics; do
+        required_extra_lines+="# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/${name}.csv"$'\n'
+      done
+      if [[ "${phase}" == "FCI" ]]; then
+        diagnostic_observables+=",pes"
+        required_extra_lines+="# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/particle_entanglement_spectrum.csv"
+      fi
     fi
-    write_header "${job}" "tpp_dx8_${geometry}_${phase_lower}_${point_tag}"
+    write_header "${job}" "tpp_dx11_${DIAGNOSTIC_JOB_TAG}_${geometry}_${phase_lower}_${point_tag}"
     cat >> "${job}" <<EOF
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/${DIAGNOSTIC_PROTOCOL}.done
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/zero_flux_spectrum.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_ground_allowed.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_ground_dense.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_ground_metrics.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_manifold_allowed.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_manifold_dense.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_manifold_metrics.csv
-# PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/structure_manifold_state_metrics.csv
+${required_extra_lines}
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/spectrum_flow.csv
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/charge_pump.csv
-${required_pes_line}
 # PHASE_STUDY_REQUIRED_OUTPUT=${result_dir}/summary.csv
 "${JULIA_BIN}" --project="${JULIA_PROJECT_DIR}" --startup-file=no \
   "${REPO_DIR}/phase_exploration/bin/run_slurm_job.jl" \
@@ -326,10 +317,13 @@ ${required_pes_line}
   --phase "${phase}" --geometry "${geometry}" --tpp "${tpp}" --mode "${MODE}" \
   --observables "${diagnostic_observables}" --zero-nev 10 --flow-nev 4 \
   --flow-cycles "${FLOW_CYCLES}" --flow-steps "${FLOW_STEPS}" \
-  --pump-steps "${PUMP_STEPS}" --pes-na 2 --dense-resolution 101 --refresh true
-printf 'protocol=%s\ntpp=%s\nflow_cycles=%s\nflow_steps=%s\npump_steps=%s\nmanifold_selection=%s\n' \
+  --pump-cycles "${PUMP_CYCLES}" --pump-steps "${PUMP_STEPS}" \
+  --flux-direction "${FLUX_DIRECTION}" --polarization-direction "${POLARIZATION_DIRECTION}" \
+  --pes-na 2 --dense-resolution 101 --refresh true
+printf 'protocol=%s\ntpp=%s\nflow_cycles=%s\nflow_steps=%s\npump_steps=%s\npump_cycles=%s\nflux_direction=%s\npolarization_direction=%s\nmanifold_selection=%s\n' \
   "${DIAGNOSTIC_PROTOCOL}" "${tpp}" "${FLOW_CYCLES}" "${FLOW_STEPS}" "${PUMP_STEPS}" \
-  "global_lowest_states_with_sector_levels" \
+  "${PUMP_CYCLES}" "${FLUX_DIRECTION}" "${POLARIZATION_DIRECTION}" \
+  "global_lowest_states_at_each_flux" \
   > "${result_dir}/${DIAGNOSTIC_PROTOCOL}.done"
 mark_complete
 EOF
@@ -404,6 +398,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HPC_DIR="$(dirname "${SCRIPT_DIR}")"
 DONE_DIR="${HPC_DIR}/completed"
 mkdir -p "${HPC_DIR}/logs" "${DONE_DIR}"
+KIND=all
+if (( $# > 0 )); then
+  [[ $# == 2 && "$1" == "--kind" ]] || {
+    echo "Usage: $0 [--kind all|diagnostics|sweep|charge-gap]" >&2; exit 2;
+  }
+  KIND="$2"
+fi
+case "${KIND}" in all|diagnostics|sweep|charge-gap) ;; *) echo "Unknown kind: ${KIND}" >&2; exit 2 ;; esac
 MANIFEST="${SCRIPT_DIR}/data_jobs.txt"
 [[ -s "${MANIFEST}" ]] || { echo "Missing or empty ${MANIFEST}" >&2; exit 2; }
 
@@ -450,7 +452,13 @@ add_dependency_ids() {
   done
 }
 
-mapfile -t job_names < "${MANIFEST}"
+mapfile -t all_job_names < "${MANIFEST}"
+job_names=()
+for name in "${all_job_names[@]}"; do
+  case "${KIND}:${name}" in
+    all:*|diagnostics:diagnostics_*|sweep:sweep_*|charge-gap:charge_gap_*) job_names+=("${name}") ;;
+  esac
+done
 job_ids=()
 submission_records=()
 skipped_active=0
@@ -553,5 +561,7 @@ EOF
 chmod +x "${GENERATED_DIR}/submit_all.sh"
 data_job_count="$(wc -l < "${DATA_MANIFEST}")"
 echo "Generated one environment job, ${data_job_count} independent data jobs, and one dependent plot job in ${GENERATED_DIR}"
-echo "Review the collection, then submit ALL jobs asynchronously with:"
+echo "Submit the flux rerun campaign (33 diagnostic points) with:"
+echo "  ${GENERATED_DIR}/submit_all.sh --kind diagnostics"
+echo "Or submit the entire study with:"
 echo "  ${GENERATED_DIR}/submit_all.sh"

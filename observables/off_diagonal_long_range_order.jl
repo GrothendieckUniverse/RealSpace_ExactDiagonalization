@@ -73,7 +73,7 @@ function off_diagonal_long_range_order(
     nG = group_order(G)
     inv_nG = 1.0 / nG
     inv_sqrt_nG = 1.0 / sqrt(nG)
-    cmap = CanonicalMap(ed_data.symmetry_group, stats, Dict{Mask,Tuple{Mask,Int,ComplexF64}}())
+    cmap = CanonicalMap(ed_data.symmetry_group, stats, ed_data.orbit_catalog)
 
     @inbounds for (col, repr_mask) in enumerate(basis.representative_mask_list)
         c_col = c[col]

@@ -8,7 +8,7 @@ checkerboard Hubbard model at band filling `nu=1/3` (flattened graph filling
 t'' = x / (2 + 2 sqrt(2)).
 ```
 
-Every generated CSV stores both `tpp_numerator=x` and `tpp_actual=t''`.
+Parameter-summary CSVs store both `tpp_numerator=x` and `tpp_actual=t''`.
 Crucially, **every sweep plot uses the physical `t''` as its horizontal
 coordinate**; plot annotations show only this physical value, rounded to two
 decimal places. The numerator defines sweep result/checkpoint directories;
@@ -41,9 +41,9 @@ flux; `--refresh true` rebuilds stale derived CSVs while resuming compatible
 checkpoints, whereas `--overwrite true` also recomputes those checkpoints.
 
 The default solver is explicit sparse-matrix ED for active geometries from 3x3
-through 3x7. On Hyak, Hamiltonian matrix construction is distributed across
-one-thread Julia workers. Sweeps and diagnostics currently stop at 3x6; 3x7 is
-retained only for charge-gap scaling and requests 84 workers and 240 GiB per
+through 3x7. On Hyak, Hamiltonian matrix construction uses shared-memory threads in
+one Julia process. Sweeps and diagnostics currently stop at 3x6; 3x7 is
+retained only for charge-gap scaling and requests 84 threads and 240 GiB per
 job. This avoids the matrix-free implementation's sector-sized buffer per
 thread, which exhausts memory on this geometry. CLI `--mode matrix` or
 `--mode matrixfree` always overrides this policy.
@@ -85,8 +85,8 @@ level), and generates:
 
 - absolute-ground-state and selected-manifold projector `S(q)` maps and
   metrics;
-- all-momentum-sector spectrum flow over one flux quantum (21 points,
-  i.e. 20 intervals, on the same grid as the charge pump);
+- all-momentum-sector spectrum flow over one flux quantum (17 points,
+  i.e. 16 intervals, on the same grid as the charge pump);
 - the manifold charge pump over one flux quantum;
 - for FCI candidates only, the Li-Haldane/Regnault-Bernevig
   momentum-resolved particle ES of the selected low-energy manifold
@@ -99,12 +99,24 @@ zero-flux checkpoints are shared and resumed sector by sector. Use `--refresh tr
 rebuild derived CSVs while retaining compatible checkpoints; `--overwrite
 true` also recomputes the checkpoints.
 
-The diagnostics renderer extracts `E4-E3` along the full stored flux path and
-writes `manifold_gap_flow.svg`.  A pump plot is visibly marked with a warning
-when the assumed three-state manifold touches outside states, because its
-branch endpoints are then not a globally isolated-bundle invariant. Diagnostic
-and charge-gap plot discovery is restricted to the configured characteristic
-points, so obsolete results such as `t''=0.21` are not rendered.
+The diagnostics renderer uses a constant zero-flux energy reference
+`E - E0(0)` for spectral flow. It scans the cached spectrum at every flux to
+choose the union of branches that enter the lowest displayed ranks, then
+plots each complete `(k1, k2, level)` branch. The upper panel shows these
+branches and the lower panel resolves the low-energy exchange.
+
+The renderer reads `spectrum_flow.csv` and `charge_pump.csv` and writes
+`spectrum_flow.svg`, `manifold_gap_flow.svg`, and `charge_pump.svg`. The gap
+plot uses global energy ranks at each flux. Pump figures show polarization
+eigenbranches and their sum; their annotations use the gap and projected-position
+singular values saved in the pump CSV.
+
+Flux CSVs carry a schema version and direction fields. The diagnostic driver
+checks the stored grid and sector/manifold coverage before reusing them.
+Refreshing flux data moves the preceding CSVs into a `history/run_*` directory,
+so an interrupted calculation cannot expose an earlier result as current.
+Compatible ED checkpoints remain reusable. Diagnostic and charge-gap plots
+include the currently configured parameter points.
 
 See [`entanglement_counting_notes.md`](entanglement_counting_notes.md) for the
 `(1,3)` PES derivation and geometry-by-geometry counting. Its discussion of
@@ -183,21 +195,11 @@ except the three fixed FCI reference states: level 1 in three sectors on 3x4
 and 3x5, and levels 1--3 of `(0,3)` on 3x6. Those three states remain plotted
 even when competing levels push them above the usual rank cutoff. This makes
 gray roton levels that cross into the FCI manifold directly visible. Each sweep point gets a
-two-panel finite-grid/dense-grid 2D structure-factor map. Diagnostic charge-pump
-and spectrum-flow legends identify their momentum sectors; the accompanying
-manifold-gap plot tests the pump's spectral-isolation prerequisite. Spectrum-flow
-plots follow the twenty states that are lowest at zero flux (configurable with
-`--max-flow-curves`). Every state in the focused manifold uses a black connecting
-line and colored scatter points; every other curve is dark gray. Thus the 3x4
-and 3x5 FCI manifolds highlight level 1 in three different sectors, whereas the
-3x6 FCI manifold highlights levels 1--3 in its common sector. Spectrum-flow
-markers are enlarged for visibility. If the focused trajectories remain directly
-separated from every other plotted level throughout
-the flux cycle, the vertical scale is 1.5 times their combined energy span plus
-the minimum direct flow gap. If that separation closes, the scale is twice the
-focused span. The lower limit is minus 5% of this scale so zero-energy branches
-remain clearly visible. The complete
-all-sector flow remains available in the CSV.
+two-panel finite-grid/dense-grid 2D structure-factor map. Diagnostic spectral
+flows use a fixed zero-flux energy reference and retain the union of branches
+low anywhere on the path. Pump legends identify polarization eigenbranches;
+fresh pump CSVs also record the actual selected states, isolation gap, and
+projected-position singular values at every flux.
 
 ## Output layout
 
@@ -221,40 +223,27 @@ restart checkpoints and can be removed after a completed campaign.
 
 ## Hyak / Klone
 
-Edit the Julia path, depot, shared project, allocation, partition, and resource
-table near the top of [`hpc/hyak_slurm_gen.sh`](hpc/hyak_slurm_gen.sh), then
-generate (but do not yet submit) the independent Slurm scripts. The shared
-project defaults to `${JULIA_DEPOT}/environments/v1.12`, matching the standard
-Klone environment. The repository path is inferred from the generator's
-location, so generated jobs follow the actual checkout under `/gscratch` or
-`/mmfs1/gscratch`. `REPO_DIR` and `JULIA_PROJECT_DIR` can both be overridden
-through environment variables.
+The [HPC run guide](hpc/README.md) describes the 17-point full-cycle
+flow/pump campaign. Edit the Julia path, depot, allocation, partition, and
+resource table near the top of [`hpc/hyak_slurm_gen.sh`](hpc/hyak_slurm_gen.sh).
+The Julia project defaults to the repository. Generate scripts in the HPC
+checkout so their paths match that machine:
 
 ```bash
 bash phase_exploration/hpc/hyak_slurm_gen.sh
+bash phase_exploration/hpc/generated/submit_all.sh --kind diagnostics
 ```
 
-This writes one `.sbatch` file per `(geometry, t'')` sweep point, plus diagnostic
-and charge-gap jobs for all eleven configured AHC, FCI, and candidate-CDW
-characteristic points. The sweep set is the union of the regular numerator
-grid and the exact numerators derived from those eleven physical diagnostic
-values; deduplication uses the same tag as the result directory. The
-accompanying `data_jobs.txt` is the exact submission manifest. Review the
-collection, then queue everything with:
+This submits the 33 characteristic flow/pump points only, plus environment
+setup and a dependent plot job. The generator also creates all sweep and
+charge-gap jobs; `submit_all.sh --kind all` submits the complete study.
+Set `DIAGNOSTIC_OBSERVABLES=all` when generating to also refresh structure
+factors and FCI particle entanglement spectra. The default preserves them.
 
-```bash
-phase_exploration/hpc/generated/submit_all.sh
-```
-
-The helper first submits one revision-specific environment job. The shared
-`v1.12` environment is used only to load `SlurmClusterManager`; the setup job
-then activates the repository project, instantiates and precompiles its exact
-manifest, and loads the complete phase-study module as a preflight. This split
-is important: packages such as `JLD2` are direct dependencies of the repository
-project but need not be directly loadable from the shared launcher environment.
-Every newly queued data job receives an `afterok` dependency on setup. A broken
-or incomplete environment therefore stops at one setup job instead of
-producing the same package-load error in every data job.
+The setup job activates the repository project, instantiates and precompiles
+its dependencies, and loads the phase-study module. Each new data job depends
+on successful setup. The launcher uses one Julia process and the allocated
+number of threads; no distributed-worker package is required.
 
 `TightBinding` is a local path dependency and must normally be checked out as a
 sibling of this repository:
@@ -279,16 +268,13 @@ markers under `hpc/completed/`. The timestamped submission CSV records setup,
 submitted, and skipped jobs. The plot job depends on setup, newly submitted
 jobs, and matching jobs that were already active.
 
-The batch shell invokes Julia directly from the shared launcher environment.
-Inside Julia, the master activates the repository project and
-`SlurmClusterManager.SlurmManager` launches every allocated task with that same
-repository project and depot explicitly propagated. The ED toolbox is then
-loaded on every worker. `_bootstrap.jl` contains no cluster-launch logic and
-remains safe for ordinary local CLI runs. Generated jobs print their resolved
-paths, resources, Julia version, and the failing shell line/command to the
-Slurm logs. Every stdout/stderr filename includes the explicit Slurm job ID,
-for example `tpp_dx8_3x5_fci_m0p15_slurm-12345678.out` and its matching
-`.err` file.
+The batch shell invokes one Julia process. The launcher checks that Slurm
+allocated one task and that Julia's thread count equals `SLURM_CPUS_PER_TASK`.
+Generated jobs print resolved paths, resources, Julia version, and the failing
+shell line/command to the Slurm logs. Each log filename includes its job ID.
+Versioned diagnostic completion markers distinguish this protocol for each requested grid.
+A rejected pump (closed gap or singular projected position) leaves its flow
+available and does not create a successful completion marker.
 
 After an HPC-side failure, inspect the job state and corresponding logs with:
 

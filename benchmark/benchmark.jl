@@ -2,30 +2,27 @@
 # ============================================================================
 # Benchmark: Single-Sector Symmetry-Resolved ED Timings
 #
-# Three models benchmarked in both matrix-construct and matrix-free modes:
-#   1. Spin:    S=½ Heisenberg chain  (N_site = [18,20,22,24,26])
-#   2. Bosonic: Haldane honeycomb FCI  (sample_size = [[2,3],[2,4],[2,5],[3,4]])
-#   3. Fermionic: Hubbard on square   (sample_size = [[2,3],[2,4],[2,5],[3,4]])
+# Three models benchmarked in both matrix-construct and matrix-free modes.
+# By default ONE representative system size per model is timed (repeated
+# `N_REPS` times for stability; the mean over repetitions is reported):
+#   1. Spin:    S=½ Heisenberg chain  N = 24
+#   2. Bosonic: Haldane honeycomb FCI  [3,4]
+#   3. Fermionic: Hubbard on square   [2,5]
+#
+# `--scan` restores the multi-size scan used for the scaling figures
+# (Heisenberg N = 18..28, Haldane up to [4,4], Hubbard up to [2,7]).
 #
 # CanonicalMap is used uniformly across all modes for O(1) canonical lookups.
 #
 # Each: JIT-warmup → time one sector (sector index 1) → CSV output
 #
+# Parallelism: shared-memory Threads.@threads only (like the Python port —
+# no Distributed machinery).  Run with e.g. `julia -t 10`.
+#
 # Usage:
-#   julia --project=. -p 8 benchmark/benchmark.jl
+#   julia --project=. -t 10 benchmark/benchmark.jl                  # single sizes
+#   julia --project=. -t 10 benchmark/benchmark.jl --scan           # multi-size scan
 # ============================================================================
-
-using Distributed
-
-# ---- ensure enough workers (fallback to single-process if none) ----
-const REQUIRED_PROCS = 4
-if nprocs() < REQUIRED_PROCS + 1
-    try
-        addprocs(REQUIRED_PROCS + 1 - nprocs(); exeflags="--project=$(Base.active_project())")
-    catch
-        @warn "Could not add workers; running single-process."
-    end
-end
 
 using RealSpace_ExactDiagonalization
 using TightBinding
@@ -42,6 +39,21 @@ const FIG_DIR = joinpath(OUTDIR, "figures")
 const MODES = [:matrix, :matrixfree]
 const SECTOR_IDX = 1             # only benchmark the first sector
 const NEV = 1             # we only need the lowest eigenvalue
+const N_REPS = 3          # timing repetitions per (model, mode)
+
+# Single representative size per model (the timely default benchmark)
+const SINGLE_SIZES = Dict(
+    "Heisenberg" => [24],
+    "Haldane_Boson" => [[3, 4]],
+    "Hubbard_Fermion" => [[2, 5]],
+)
+
+# Full multi-size scan used with --scan (scaling figures)
+const SCAN_SIZES = Dict(
+    "Heisenberg" => [18, 20, 22, 24, 26, 28],
+    "Haldane_Boson" => [[2, 3], [2, 4], [2, 5], [3, 4], [2, 7], [4, 4]],
+    "Hubbard_Fermion" => [[2, 2], [2, 3], [2, 4], [2, 5], [3, 4], [2, 7]],
+)
 
 mkpath(RESULT_DIR)
 mkpath(FIG_DIR)
@@ -218,7 +230,7 @@ function time_single_sector!(ed_data, mode::Symbol, sector_index::Int=1)
     if mode == :matrix
         vals, _ = ed_scan_at_irrep_matrix!(irrep.label, ed_data; nev=NEV)
     elseif mode == :matrixfree
-        vals, _ = ed_scan_at_irrep_matrixfree!(irrep.label, ed_data; nev=NEV, use_distributed=false)
+        vals, _ = ed_scan_at_irrep_matrixfree!(irrep.label, ed_data; nev=NEV)
     else
         error("unknown mode $mode")
     end
@@ -264,26 +276,63 @@ struct BenchRow
     energy::Float64
 end
 
-function run_benchmarks()
+function run_benchmarks(; scan::Bool=false)
     warmup!()
 
     all_rows = BenchRow[]
+
+    size_sets = scan ? SCAN_SIZES : SINGLE_SIZES
+
+    function timed_row(model_name::String, label::String, builder, size, mode::Symbol)
+        times = Float64[]
+        e0 = NaN
+        ed = nothing
+        dim = 0
+        t_elapsed = 0.0
+        for rep in 1:N_REPS
+            ed = builder(size)
+            println("    [rep $rep/$N_REPS] catalog built; timing sector ...")
+            flush(stdout)
+            t_elapsed, dim, e0 = time_single_sector!(ed, mode)
+            push!(times, t_elapsed)
+            println("    [rep $rep/$N_REPS] done t=$(round(t_elapsed, digits=3))s")
+            flush(stdout)
+        end
+        used = N_REPS > 1 ? times[2:end] : times  # drop the first rep (cache warm)
+        mean_t = sum(used) / length(used)
+        push!(all_rows, BenchRow(
+            model_name, label, ed.second_quantized_model.lattice.n_site, ed.n_filled,
+            binomial(ed.second_quantized_model.lattice.n_site, ed.n_filled),
+            length(ed.orbit_catalog.representative_mask_list),
+            length(ed.symmetry_group.operations), dim, string(mode), mean_t, e0,
+        ))
+        println("  $label  mode=$(rpad(mode,11))  dim=$dim  t=$(round(mean_t,digits=4))s (mean of $(length(used)) reps)")
+        # Incremental checkpoint: never lose completed rows to an interrupted run
+        try
+            ckpt = joinpath(RESULT_DIR, "benchmark_raw_checkpoint.csv")
+            open(ckpt, "w") do io
+                println(io, "model,label,n_site,n_filled,full_dim,n_orbits,n_group,sector_dim,mode,elapsed_s,energy")
+                for r in all_rows
+                    println(io, join((
+                            r.model, r.label, r.n_site, r.n_filled, r.full_dim, r.n_orbits, r.n_group,
+                            r.sector_dim, r.mode,
+                            @sprintf("%.9f", r.elapsed_s), @sprintf("%.15f", r.energy),
+                        ), ","))
+                end
+            end
+        catch
+            @warn "checkpoint write failed (non-fatal)"
+        end
+        return nothing
+    end
 
     # ---- 1. Heisenberg chain ----
     println("\n" * "="^70)
     println("  Model 1: Spin-½ Heisenberg Chain (translation symmetry)")
     println("="^70)
-    for N in [18, 20, 22, 24, 26, 28]
+    for N in size_sets["Heisenberg"]
         for mode in MODES
-            ed = build_heisenberg_ed(N)
-            t_elapsed, dim, e0 = time_single_sector!(ed, mode)
-            push!(all_rows, BenchRow(
-                "Heisenberg", "N=$N", ed.second_quantized_model.lattice.n_site, ed.n_filled,
-                binomial(ed.second_quantized_model.lattice.n_site, ed.n_filled),
-                length(ed.orbit_catalog.representative_mask_list),
-                length(ed.symmetry_group.operations), dim, string(mode), t_elapsed, e0,
-            ))
-            println("  N=$N  mode=$(rpad(mode,11))  dim=$dim  t=$(round(t_elapsed,digits=4))s")
+            timed_row("Heisenberg", "N=$N", build_heisenberg_ed, N, mode)
         end
     end
 
@@ -291,17 +340,9 @@ function run_benchmarks()
     println("\n" * "="^70)
     println("  Model 2: Bosonic Haldane FCI (translation symmetry)")
     println("="^70)
-    for ss in [[2, 3], [2, 4], [2, 5], [3, 4], [2, 7], [4, 4]]
+    for ss in size_sets["Haldane_Boson"]
         for mode in MODES
-            ed = build_haldane_ed(ss)
-            t_elapsed, dim, e0 = time_single_sector!(ed, mode)
-            push!(all_rows, BenchRow(
-                "Haldane_Boson", "$(ss[1])×$(ss[2])", ed.second_quantized_model.lattice.n_site, ed.n_filled,
-                binomial(ed.second_quantized_model.lattice.n_site, ed.n_filled),
-                length(ed.orbit_catalog.representative_mask_list),
-                length(ed.symmetry_group.operations), dim, string(mode), t_elapsed, e0,
-            ))
-            println("  $(ss[1])×$(ss[2])  mode=$(rpad(mode,11))  dim=$dim  t=$(round(t_elapsed,digits=4))s")
+            timed_row("Haldane_Boson", "$(ss[1])×$(ss[2])", build_haldane_ed, ss, mode)
         end
     end
 
@@ -309,22 +350,15 @@ function run_benchmarks()
     println("\n" * "="^70)
     println("  Model 3: Spinful Fermi-Hubbard (translation symmetry)")
     println("="^70)
-    for ss in [[2, 2], [2, 3], [2, 4], [2, 5], [3, 4], [2, 7]]
+    for ss in size_sets["Hubbard_Fermion"]
         for mode in MODES
-            ed = build_hubbard_ed(ss)
-            t_elapsed, dim, e0 = time_single_sector!(ed, mode)
-            push!(all_rows, BenchRow(
-                "Hubbard_Fermion", "$(ss[1])×$(ss[2])", ed.second_quantized_model.lattice.n_site, ed.n_filled,
-                binomial(ed.second_quantized_model.lattice.n_site, ed.n_filled),
-                length(ed.orbit_catalog.representative_mask_list),
-                length(ed.symmetry_group.operations), dim, string(mode), t_elapsed, e0,
-            ))
-            println("  $(ss[1])×$(ss[2])  mode=$(rpad(mode,11))  dim=$dim  t=$(round(t_elapsed,digits=4))s")
+            timed_row("Hubbard_Fermion", "$(ss[1])×$(ss[2])", build_hubbard_ed, ss, mode)
         end
     end
 
     return all_rows
 end
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Write CSV
@@ -416,35 +450,42 @@ end
 # Main
 # ═══════════════════════════════════════════════════════════════════════════
 
+const SCAN_MODE = "--scan" in ARGS
+
 println("="^70)
 println("  Single-Sector ED Benchmark")
-# println("  Timestamp: $TIMESTAMP")
-println("  Workers: $(nworkers())  |  Threads: $(Threads.nthreads())")
+println("  Threads: $(Threads.nthreads())")
+println("  Mode: $(SCAN_MODE ? "multi-size scan" : "single sizes (one per model)"), reps=$N_REPS")
 println("="^70)
 
-rows = run_benchmarks()
+rows = run_benchmarks(; scan=SCAN_MODE)
 
 # Write CSV
-raw_path = joinpath(RESULT_DIR, "benchmark_raw.csv")
+raw_path = joinpath(RESULT_DIR, SCAN_MODE ? "benchmark_raw.csv" : "benchmark_raw_single.csv")
 write_csv(raw_path, rows)
 println("\nResults → $raw_path")
 
-# Also symlink/overwrite as "latest"
-latest_path = joinpath(RESULT_DIR, "benchmark_raw_latest.csv")
-cp(raw_path, latest_path; force=true)
+# Also symlink/overwrite as "latest" (scan mode only — keeps the historical
+# multi-size reference in `benchmark_raw.csv` intact otherwise)
+if SCAN_MODE
+    latest_path = joinpath(RESULT_DIR, "benchmark_raw_latest.csv")
+    cp(raw_path, latest_path; force=true)
+end
 
-# Plot
-println("\n--- Generating plots ---")
-plot_model(rows, "Heisenberg", joinpath(FIG_DIR, "heisenberg_1D.svg"))
-plot_model(rows, "Haldane_Boson", joinpath(FIG_DIR, "bose_hubbard_2D.svg"))
-plot_model(rows, "Hubbard_Fermion", joinpath(FIG_DIR, "spinful_fermi_hubbard_2D.svg"))
+# Plot (scan mode only — single-size runs would clobber the historical
+# multi-size figures with one-point plots)
+if SCAN_MODE
+    println("\n--- Generating plots ---")
+    plot_model(rows, "Heisenberg", joinpath(FIG_DIR, "heisenberg_1D.svg"))
+    plot_model(rows, "Haldane_Boson", joinpath(FIG_DIR, "bose_hubbard_2D.svg"))
+    plot_model(rows, "Hubbard_Fermion", joinpath(FIG_DIR, "spinful_fermi_hubbard_2D.svg"))
 
-plot_scaling(rows, "Heisenberg", joinpath(FIG_DIR, "heisenberg_1D_scaling.svg"))
-plot_scaling(rows, "Haldane_Boson", joinpath(FIG_DIR, "bose_hubbard_2D_scaling.svg"))
-plot_scaling(rows, "Hubbard_Fermion", joinpath(FIG_DIR, "spinful_fermi_hubbard_2D_scaling.svg"))
+    plot_scaling(rows, "Heisenberg", joinpath(FIG_DIR, "heisenberg_1D_scaling.svg"))
+    plot_scaling(rows, "Haldane_Boson", joinpath(FIG_DIR, "bose_hubbard_2D_scaling.svg"))
+    plot_scaling(rows, "Hubbard_Fermion", joinpath(FIG_DIR, "spinful_fermi_hubbard_2D_scaling.svg"))
 
-
-include("plot_benchmark.jl") # combine plot
+    include("plot_benchmark.jl") # combine plot
+end
 
 
 println("\nDone. All plots saved to $FIG_DIR")

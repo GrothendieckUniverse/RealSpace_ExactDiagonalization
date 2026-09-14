@@ -16,15 +16,10 @@ isfile(joinpath(tightbinding_dir, "Project.toml")) ||
     error("No Project.toml found in TIGHTBINDING_DIR=$tightbinding_dir")
 
 launcher_project = Base.active_project()
-@info "Preparing shared HPC launcher environment" launcher_project repo_dir tightbinding_dir DEPOT_PATH
+@info "Preparing HPC repository environment" launcher_project repo_dir tightbinding_dir DEPOT_PATH
 
-# The shared environment owns SlurmClusterManager only. ED and phase-study
-# dependencies must resolve from the repository project, where JLD2 and the
-# remaining direct dependencies are declared.
-Pkg.instantiate()
-Pkg.precompile()
-using SlurmClusterManager
-
+# The launcher uses only Julia standard libraries. Resolve ED and plotting
+# dependencies from the repository project; no distributed-worker package is needed.
 Pkg.activate(repo_dir)
 # Keep the local TightBinding dependency portable by recording its path relative
 # to the repository project rather than embedding a workstation/HPC absolute
@@ -45,6 +40,6 @@ using .CheckerboardPhaseStudy
 package_source = pathof(RealSpace_ExactDiagonalization)
 package_root = realpath(joinpath(dirname(package_source), ".."))
 package_root == repo_dir ||
-    error("Shared environment resolved RealSpace_ExactDiagonalization at $package_root, expected $repo_dir")
+    error("Project resolved RealSpace_ExactDiagonalization at $package_root, expected $repo_dir")
 
-@info "HPC Julia environments ready" launcher_project ed_project=Base.active_project() package_source slurm_manager_source=pathof(SlurmClusterManager)
+@info "HPC Julia environments ready" launcher_project ed_project=Base.active_project() package_source

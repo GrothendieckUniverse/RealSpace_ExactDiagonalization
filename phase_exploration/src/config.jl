@@ -1,7 +1,7 @@
 const PHASE_ROOT = normpath(joinpath(@__DIR__, ".."))
 const RESULT_ROOT = joinpath(PHASE_ROOT, "results")
 const FIGURE_ROOT = joinpath(PHASE_ROOT, "figures")
-const CHECKPOINT_ROOT = joinpath(PHASE_ROOT, "checkpoints")
+const CHECKPOINT_ROOT = joinpath(PHASE_ROOT, "checkpoints", "solver_v2")
 
 const TPP_DENOMINATOR = 2 + 2 * sqrt(2)
 
@@ -118,4 +118,11 @@ function default_particle_number(sample::Tuple{Int,Int})
     ncell = prod(sample)
     ncell % 3 == 0 || error("ν=1/3 band filling requires L1*L2 divisible by 3; got $sample.")
     return ncell ÷ 3
+end
+
+"An inclusive one-direction flux grid, in units of 2π (points, not intervals)."
+function diagnostic_flux_grid(points::Int=17, cycles::Real=1.0)
+    points >= 2 || throw(ArgumentError("Flux grids need at least two points."))
+    isfinite(cycles) && cycles > 0 || throw(ArgumentError("Flux cycles must be finite and positive."))
+    return collect(range(0.0, Float64(cycles); length=points))
 end

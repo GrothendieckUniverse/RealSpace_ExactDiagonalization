@@ -5,3 +5,6 @@ hpc/completed/
 checkpoints/
 figures/
 results/
+
+# Local snapshots retained before plot regeneration
+figure_archives/

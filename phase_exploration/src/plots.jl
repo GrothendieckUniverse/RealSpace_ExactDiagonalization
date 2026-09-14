@@ -726,7 +726,6 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
         title_prefix = isnothing(tpp) ? "$phase — $(geometry_tag(sample))" :
                        "$phase — $(geometry_tag(sample)), t′′ = $(format_tpp(tpp))"
         state_specs = manifold_state_specs(datadir)
-        flow_isolation_min = nothing
 
         ground_allowed_path = joinpath(datadir, "structure_ground_allowed.csv")
         ground_dense_path = joinpath(datadir, "structure_ground_dense.csv")
@@ -783,13 +782,16 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
                 key = (csv_int(row.k1), csv_int(row.k2), csv_int(row.level))
                 push!(get!(groups, key, Any[]), row)
             end
-            curves = collect(groups)
-            sort!(curves; by=curve -> begin
-                key, values = curve
-                reference = values[argmin([abs(csv_float(row.flux_over_2pi)) for row in values])]
-                (csv_float(reference.energy_minus_flux_ground), key...)
-            end)
-            resize!(curves, min(max_flow_curves, length(curves)))
+            low_keys = Set{Tuple{Int,Int,Int}}()
+            for theta in unique(csv_float(row.flux_over_2pi) for row in rows)
+                at_flux = sort([row for row in rows if csv_float(row.flux_over_2pi) == theta]; by=row->csv_float(row.energy))
+                for row in at_flux[1:min(max_flow_curves,length(at_flux))]
+                    push!(low_keys,(csv_int(row.k1),csv_int(row.k2),csv_int(row.level)))
+                end
+            end
+            curves = sort([pair for pair in groups if pair.first in low_keys]; by=first)
+            reference_energy = minimum(csv_float(row.energy) for row in rows if abs(csv_float(row.flux_over_2pi))<1e-12)
+            plot_energy(row) = csv_float(row.energy) - reference_energy
 
             focused_states = unique((state.sector..., state.level) for state in state_specs)
             if isempty(focused_states)
@@ -810,70 +812,51 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
             )
             focused_energies = Float64[]
             all_flow_energies = Float64[]
-            focused_by_flux = Dict{Float64,Vector{Float64}}()
-            other_by_flux = Dict{Float64,Vector{Float64}}()
             for (key, values) in curves
-                energy_by_flux = is_focused_curve(key) ? focused_by_flux : other_by_flux
                 for row in values
-                    flux = csv_float(row.flux_over_2pi)
-                    energy = csv_float(row.energy_minus_flux_ground)
+                    energy = plot_energy(row)
                     push!(all_flow_energies, energy)
-                    push!(get!(energy_by_flux, flux, Float64[]), energy)
                     is_focused_curve(key) && push!(focused_energies, energy)
                 end
             end
 
-            fig = Figure(size=(980, 540))
-            ax = Axis(fig[1, 1]; xlabel="inserted flux / 2π", ylabel="E - E₀(θ)",
-                title="$title_prefix spectrum flow ($(length(curves)) lowest zero-flux states)")
+            fig = Figure(size=(1100, 720))
+            Label(fig[0, 1:2], "$title_prefix — spectrum flow"; fontsize=20)
+            ax = Axis(fig[1, 1]; ylabel="E − E₀(0)",
+                title="All sectors scanned; $(length(curves)) branches low anywhere on the path")
+            ax_zoom = Axis(fig[2, 1]; xlabel="inserted flux / 2π", ylabel="E − E₀(0)",
+                title="Low-energy detail (same fixed energy reference)")
             for curve in ordered_curves
                 (k1, k2, level), values = curve
                 sort!(values; by=row -> csv_float(row.flux_over_2pi))
                 focused = is_focused_curve((k1, k2, level))
-                line_color = focused ? :black : OTHER_FLOW_COLOR
-                point_color = focused ? focused_colors[(k1, k2, level)] : OTHER_FLOW_COLOR
-                alpha = focused ? 1.0 : 0.82
-                lines!(ax, [csv_float(row.flux_over_2pi) for row in values],
-                    [csv_float(row.energy_minus_flux_ground) for row in values];
-                    color=line_color, linewidth=focused ? 1.6 : 1.0, alpha=alpha)
-                scatter!(ax, [csv_float(row.flux_over_2pi) for row in values],
-                    [csv_float(row.energy_minus_flux_ground) for row in values];
-                    color=point_color, markersize=focused ? 14 : 10, alpha=alpha,
-                    strokewidth=0)
+                color = focused ? focused_colors[(k1, k2, level)] : OTHER_FLOW_COLOR
+                for target in (ax, ax_zoom)
+                    lines!(target, [csv_float(row.flux_over_2pi) for row in values],
+                        [plot_energy(row) for row in values]; color=color,
+                        linewidth=focused ? 2.0 : 0.8, alpha=focused ? 1.0 : 0.5)
+                    focused && scatter!(target,
+                        [csv_float(row.flux_over_2pi) for row in values],
+                        [plot_energy(row) for row in values]; color=color, markersize=4)
+                end
             end
             xlims!(ax, 0.0, 1.0)
+            xlims!(ax_zoom, 0.0, 1.0)
             if !isempty(focused_energies)
-                focused_min, focused_max = extrema(focused_energies)
-                focused_span = focused_max - focused_min
-                direct_gaps = Float64[]
-                for (flux, focus_values) in focused_by_flux
-                    haskey(other_by_flux, flux) || continue
-                    push!(direct_gaps,
-                        minimum(other_by_flux[flux]) - maximum(focus_values))
-                end
-                global_flow_gap = isempty(direct_gaps) ? nothing : minimum(direct_gaps)
-                fully_separated = !isnothing(global_flow_gap) && global_flow_gap > 1e-10
-                plot_range = fully_separated ?
-                    1.5 * (focused_span + global_flow_gap) : 2.0 * focused_span
-
-                # A perfectly flat focused branch has zero span.  Retain a small,
-                # finite window so Makie receives valid limits in this singular case.
-                if plot_range <= 1e-10
-                    energy_scale = isempty(all_flow_energies) ? 0.0 : maximum(all_flow_energies)
-                    plot_range = max(0.1 * energy_scale, 0.05)
-                end
-                ylims!(ax, -0.05 * plot_range, plot_range)
+                lo, hi = extrema(focused_energies)
+                span = max(hi - lo, 0.02)
+                ylims!(ax_zoom, min(lo, minimum(all_flow_energies)) - 0.15span,
+                    hi + 0.35span)
             end
-
-            legend_elements = [MarkerElement(marker=:circle, color=focused_colors[state],
-                strokewidth=0, markersize=10) for state in focused_states]
-            legend_labels = ["focused sector ($(state[1]), $(state[2])), level $(state[3])"
+            legend_elements = [LineElement(color=focused_colors[state], linewidth=2)
+                for state in focused_states]
+            legend_labels = ["k = ($(state[1]), $(state[2])), level $(state[3])"
                              for state in focused_states]
-            push!(legend_elements, MarkerElement(marker=:circle, color=OTHER_FLOW_COLOR,
-                strokewidth=0, markersize=9))
-            push!(legend_labels, "other levels")
-            Legend(fig[1, 2], legend_elements, legend_labels;
-                framevisible=true, labelsize=11, patchsize=(20, 12))
+            push!(legend_elements, LineElement(color=OTHER_FLOW_COLOR, linewidth=1))
+            push!(legend_labels, "other sector levels")
+            Legend(fig[1:2, 2], legend_elements, legend_labels;
+                title="Zero-flux reference states", framevisible=true,
+                labelsize=11, patchsize=(20, 12))
             colgap!(fig.layout, 10)
             path = joinpath(outdir, "spectrum_flow.svg")
             save(path, fig)
@@ -897,7 +880,6 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
             end
             sort!(gap_points; by=point -> point.flux)
             if !isempty(gap_points)
-                flow_isolation_min = minimum(point.rank_isolation for point in gap_points)
                 fig_gap = Figure(size=(760, 520))
                 ax_gap = Axis(fig_gap[1, 1]; xlabel="inserted flux / 2π",
                     ylabel="energy difference",
@@ -906,7 +888,7 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
                     (:neutral_from_ground, "E$(manifold_size + 1)−E₁",
                         :royalblue3, :solid),
                     (:rank_isolation,
-                        "E$(manifold_size + 1)−E$(manifold_size) (pump isolation)",
+                        "E$(manifold_size + 1)−E$(manifold_size) (global rank gap)",
                         :darkorange2, :solid),
                     (:manifold_width, "E$(manifold_size)−E₁", :slategray3, :dash),
                 ]
@@ -928,31 +910,36 @@ function plot_diagnostic_results(; phases=[:AHC, :FCI, :CDW], samples=STUDY_GEOM
         if isfile(pump_path) && charge_pump_point_is_active(phase_symbol, tpp)
             rows = read_simple_csv(pump_path)
             groups = group_rows(rows, (:branch,))
-            fig = Figure(size=(760, 520))
-            isolation_note = if flow_isolation_min === nothing
-                ""
-            elseif flow_isolation_min <= 1e-8
-                "\nwarning: assumed manifold touches outside states along flow"
+            fig = Figure(size=(980, 660))
+            isolation_note = if all(hasproperty(first(rows), field) for field in
+                (:manifold_gap, :min_position_singular_value))
+                gap = minimum(csv_float(row.manifold_gap) for row in rows)
+                min_sv = minimum(csv_float(row.min_position_singular_value) for row in rows)
+                "Global manifold: min gap = " * @sprintf("%.3g", gap) *
+                    "; min projected-position singular value = " * @sprintf("%.3g", min_sv)
             else
-                "\nmin flow isolation = " * @sprintf("%.3g", flow_isolation_min)
+                "Manifold diagnostics unavailable in this CSV; regenerate to validate the pump"
             end
-            ax = Axis(fig[1, 1]; xlabel="inserted flux / 2π", ylabel="pumped charge ΔQ",
-                title="$title_prefix charge pump$isolation_note")
+            Label(fig[0, 1], "$title_prefix — charge pump"; fontsize=20)
+            Label(fig[3, 1], isolation_note; fontsize=12)
+            ax = Axis(fig[1, 1]; ylabel="branch ΔQ",
+                title="Unwrapped polarization eigenbranches")
+            ax_total = Axis(fig[2, 1]; xlabel="inserted flux / 2π", ylabel="Σ branch ΔQ")
             for (key, values) in sort(collect(groups); by=x -> csv_int(x[1][1]))
                 branch = csv_int(key[1])
                 sort!(values; by=row -> csv_float(row.flux_over_2pi))
                 x = [csv_float(row.flux_over_2pi) for row in values]
                 y = [csv_float(row.pumped_charge) for row in values]
-                label = if branch <= length(state_specs)
-                    state = state_specs[branch]
-                    "branch $branch — sector ($(state.sector[1]), $(state.sector[2])), level $(state.level)"
-                else
-                    "branch $branch"
-                end
+                label = "polarization branch $branch"
                 lines!(ax, x, y; color=Makie.Cycled(branch), linewidth=2, label=label)
                 scatter!(ax, x, y; color=Makie.Cycled(branch), markersize=6)
             end
             axislegend(ax; position=:lt)
+            totals = sort([(csv_float(rs[1].flux_over_2pi),
+                sum(csv_float(row.pumped_charge) for row in rs))
+                for rs in Base.values(group_rows(rows, (:flux_over_2pi,)))]; by=first)
+            lines!(ax_total, first.(totals), last.(totals); color=:black, linewidth=2)
+            scatter!(ax_total, first.(totals), last.(totals); color=:black, markersize=5)
             path = joinpath(outdir, "charge_pump.svg")
             save(path, fig)
             push!(outputs, path)

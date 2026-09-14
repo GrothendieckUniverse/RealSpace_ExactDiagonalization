@@ -82,7 +82,7 @@ function scan_with_resume!(ed_data;
     if checkpoint_path !== nothing && isfile(checkpoint_path) && !overwrite
         loaded = load_checkpoint(checkpoint_path)
         checkpoint_problem_matches(loaded, ed_data.second_quantized_model,
-            ed_data.filling_fraction) || error(
+            ed_data.filling_fraction; flux=ed_data.second_quantized_model.lattice.twisted_phases_over_2π) || error(
             "Checkpoint `$checkpoint_path` belongs to a different model/filling. " *
             "Use --overwrite true or remove that checkpoint after changing config.jl.")
         ed_data = loaded
@@ -115,8 +115,7 @@ function scan_with_resume!(ed_data;
             length(values) >= nev && size(vectors, 2) >= nev && continue
             delete!(ed_data.ed_scan_res, idx)
         end
-        ed_scan!(ed_data; nev=nev, mode=mode,
-            use_distributed=(nprocs() > 1), scanned_sectors=[label])
+        ed_scan!(ed_data; nev=nev, mode=mode, scanned_sectors=[label])
         checkpoint_path !== nothing && save_checkpoint(ed_data, ensure_parent(checkpoint_path))
     end
     checkpoint_path !== nothing && save_checkpoint(ed_data, ensure_parent(checkpoint_path))

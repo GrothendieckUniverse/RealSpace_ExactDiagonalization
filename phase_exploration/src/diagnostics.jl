@@ -1,4 +1,35 @@
-function write_flow_csv(path, checkpoint_paths, flux_values, sectors, nev)
+const DIAGNOSTIC_SCHEMA_VERSION = 1
+
+"Check that a stored flux observable matches the requested grid and selection."
+function flux_output_complete(path, flux_values; flux_direction,
+    polarization_direction=nothing, sample=nothing, levels=nothing, manifold_size=nothing)
+    isfile(path) || return false
+    rows = read_simple_csv(path)
+    isempty(rows) && return false
+    all(hasproperty(first(rows), field) for field in (:schema_version, :flux_direction, :flux_over_2pi)) || return false
+    all(csv_int(r.schema_version) == DIAGNOSTIC_SCHEMA_VERSION &&
+        csv_int(r.flux_direction) == flux_direction for r in rows) || return false
+    groups = group_rows(rows, (:flux_over_2pi,))
+    stored_flux = sort([csv_float(key[1]) for key in keys(groups)])
+    requested_flux = sort(unique(flux_values))
+    length(stored_flux) == length(requested_flux) || return false
+    all(isapprox.(stored_flux, requested_flux; atol=1e-13, rtol=0)) || return false
+    if manifold_size !== nothing
+        all(hasproperty(first(rows), field) for field in
+            (:polarization_direction, :manifold_gap, :min_position_singular_value, :selected_states, :branch)) || return false
+        all(csv_int(r.polarization_direction) == polarization_direction &&
+            csv_float(r.manifold_gap) > 1e-9 &&
+            csv_float(r.min_position_singular_value) > 1e-10 for r in rows) || return false
+        return all(sort([csv_int(r.branch) for r in rs]) == collect(1:manifold_size)
+            for rs in values(groups))
+    end
+    all(hasproperty(first(rows), field) for field in (:k1, :k2, :level)) || return false
+    expected = Set((i, j, level) for i in 0:sample[1]-1 for j in 0:sample[2]-1 for level in 1:levels)
+    return all(issubset(expected, Set((csv_int(r.k1), csv_int(r.k2), csv_int(r.level)) for r in rs))
+        for rs in values(groups))
+end
+
+function write_flow_csv(path, checkpoint_paths, flux_values, sectors, nev; flux_direction::Int=1)
     ensure_parent(path)
     rows = NamedTuple[]
     for (itheta, checkpoint) in enumerate(checkpoint_paths)
@@ -20,10 +51,11 @@ function write_flow_csv(path, checkpoint_paths, flux_values, sectors, nev)
         end
     end
     open(path, "w") do io
-        println(io, "flux_over_2pi,k1,k2,level,energy,energy_minus_flux_ground")
+        println(io, "flux_over_2pi,k1,k2,level,energy,energy_minus_flux_ground,schema_version,flux_direction")
         for row in rows
-            @printf(io, "%.16g,%d,%d,%d,%.16g,%.16g\n",
-                row.theta, row.sector[1], row.sector[2], row.level, row.energy, row.shifted)
+            @printf(io, "%.16g,%d,%d,%d,%.16g,%.16g,%d,%d\n",
+                row.theta, row.sector[1], row.sector[2], row.level, row.energy, row.shifted,
+                DIAGNOSTIC_SCHEMA_VERSION, flux_direction)
         end
     end
     return path
@@ -32,13 +64,17 @@ end
 function write_pump_csv(path, pump)
     ensure_parent(path)
     open(path, "w") do io
-        println(io, "flux_over_2pi,branch,polarization,pumped_charge")
+        println(io, "flux_over_2pi,branch,polarization,pumped_charge,manifold_gap,min_position_singular_value,selected_states,schema_version,flux_direction,polarization_direction")
         for itheta in eachindex(pump.twisted_phases_over_2π_list),
             branch in axes(pump.pumped_charge_trajectories, 2)
-            @printf(io, "%.16g,%d,%.16g,%.16g\n",
+            state_text = join(["$(s.sector[1]):$(s.sector[2]):$(s.level)"
+                for s in pump.selected_states[itheta]], ';')
+            @printf(io, "%.16g,%d,%.16g,%.16g,%.16g,%.16g,%s,%d,%d,%d\n",
                 pump.twisted_phases_over_2π_list[itheta], branch,
                 pump.polarizations[itheta, branch],
-                pump.pumped_charge_trajectories[itheta, branch])
+                pump.pumped_charge_trajectories[itheta, branch],
+                pump.gaps[itheta], pump.min_position_singular_values[itheta], state_text,
+                DIAGNOSTIC_SCHEMA_VERSION, pump.flux_direction, pump.polarization_direction)
         end
     end
     return path
@@ -72,8 +108,8 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     observables::Vector{Symbol}=default_diagnostic_observables(phase_name),
     zero_nev::Int=10,
     flow_nev::Int=4,
-    flow_flux_values::Vector{Float64}=collect(range(0.0, 1.0; length=21)),
-    pump_flux_values::Vector{Float64}=collect(range(0.0, 1.0; length=21)),
+    flow_flux_values::Vector{Float64}=diagnostic_flux_grid(),
+    pump_flux_values::Vector{Float64}=diagnostic_flux_grid(),
     flux_direction::Int=1,
     polarization_direction::Int=2,
     n_particles_a::Int=2,
@@ -110,8 +146,14 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
         joinpath(outdir, "structure_manifold_metrics.csv"),
         joinpath(outdir, "structure_manifold_state_metrics.csv"),
     ]
-    observable_complete(obs) = obs == :structure ? all(isfile, structure_outputs) :
-                               isfile(output_for[obs])
+    function observable_complete(obs)
+        obs == :structure && return all(isfile, structure_outputs)
+        obs == :flow && return flux_output_complete(output_for[obs], flow_flux_values;
+            flux_direction, sample, levels=flow_nev)
+        obs == :pump && return flux_output_complete(output_for[obs], pump_flux_values;
+            flux_direction, polarization_direction, manifold_size=nmanifold)
+        return isfile(output_for[obs])
+    end
     # `refresh` rebuilds derived CSVs while reusing compatible ED checkpoints.
     # `overwrite` additionally discards and recomputes those checkpoints.
     todo = [obs for obs in observables if refresh || overwrite || !observable_complete(obs)]
@@ -119,6 +161,19 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
        isfile(joinpath(outdir, "zero_flux_spectrum.csv"))
         @info "Requested diagnostics already complete; skipping" phase sample outdir
         return outdir
+    end
+
+    # Keep the preceding data, and ensure an interrupted refresh cannot leave a
+    # previous flux result looking like the output of the current calculation.
+    previous = [output_for[obs] for obs in todo if obs in (:flow, :pump) && isfile(output_for[obs])]
+    if !isempty(previous)
+        history_root = joinpath(outdir, "history")
+        mkpath(history_root)
+        history_dir = mktempdir(history_root; prefix="run_", cleanup=false)
+        for path in previous
+            mv(path, joinpath(history_dir, basename(path)))
+        end
+        @info "Archived previous flux data" history_dir
     end
 
     model, ed_data, n_particles, filling = build_checkerboard_problem(sample, xvalue)
@@ -198,7 +253,7 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     if !isempty(union_flux)
         paths = ensure_flux_checkpoints(model, filling, union_flux;
             flux_direction=flux_direction,
-            nev=max(flow_nev, manifold_nev, 2),
+            nev=max(flow_nev, nmanifold+1, 2),
             mode=mode,
             checkpoint_dir=ckpt_flux,
             sectors=all_sectors,
@@ -211,19 +266,19 @@ function run_phase_diagnostics(phase_name, sample::Tuple{Int,Int};
     if :flow in todo
         flow_paths = [flux_path_map[theta] for theta in flow_flux_values]
         write_flow_csv(output_for[:flow],
-            flow_paths, flow_flux_values, all_sectors, flow_nev)
+            flow_paths, flow_flux_values, all_sectors, flow_nev; flux_direction)
     end
 
     pump = nothing
     if :pump in todo
         # The checkpoints above are solver-mode agnostic. The toolbox pump call
         # sees complete files and only performs the polarization projection.
-        pump = flux_charge_pump(model, manifold_sectors;
+        pump = flux_charge_pump(model, :all;
             filling_fraction=filling,
             flux_direction=flux_direction,
             polarization_direction=polarization_direction,
             twisted_phases_over_2π_list=pump_flux_values,
-            manifold_states=manifold_states,
+            manifold_size=nmanifold,
             checkpoint_dir=ckpt_flux,
             overwrite=false)
         write_pump_csv(output_for[:pump], pump)
